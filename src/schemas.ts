@@ -26,3 +26,37 @@ export const MessageBodySchema = z.object({
     .min(1, 'Mesajul nu poate fi gol')
     .max(5000, 'Mesajul poate avea maxim 5000 de caractere'),
 });
+
+// Sumarul cazului, exact forma `CaseSummary` din MedFlow-AI/core/schemas/case-summary.ts.
+// Dacă se schimbă acolo, trebuie schimbat și aici (contractul AI <-> Backend).
+const CaseSummarySchema = z.object({
+  chiefComplaint: z.string(),
+  onset: z.string(),
+  duration: z.string(),
+  pattern: z.string(),
+  severity: z.number().min(0).max(10),
+  associatedSymptoms: z.array(z.string()),
+  currentMedications: z.array(z.string()),
+  allergiesConditions: z.array(z.string()),
+  redFlagsDetected: z.boolean(),
+  rawTranscript: z.string(),
+  metadata: z.object({
+    timestamp: z.string(),
+    patientId: z.uuid('metadata.patientId trebuie să fie un UUID valid'),
+    language: z.enum(['ro', 'en']),
+  }),
+});
+
+// Body pentru POST /cases/:id/analysis.
+// - prima rundă: doar caseSummary (+ opțional documentsContext)
+// - runda de clarificare: același caseSummary + patientResponse (răspunsul pacientului)
+export const AnalysisBodySchema = z.object({
+  caseSummary: CaseSummarySchema,
+  documentsContext: z.string().optional(),
+  patientResponse: z
+    .string('patientResponse trebuie să fie text')
+    .trim()
+    .min(1, 'Răspunsul pacientului nu poate fi gol')
+    .max(5000, 'Răspunsul pacientului poate avea maxim 5000 de caractere')
+    .optional(),
+});
