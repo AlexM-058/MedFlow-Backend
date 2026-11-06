@@ -1,29 +1,17 @@
 import "dotenv/config";
-import cors from "cors";
 import express from "express";
 import { casesRouter } from "./cases";
 import { pingDatabase } from "./supabase.js";
-
-// Adresele (origin) Frontend-ului care au voie să apeleze Backend-ul din browser,
-// din CORS_ORIGIN, separate prin virgulă. Ex: "http://localhost:5173,https://medflow.example".
-// Dacă CORS_ORIGIN lipsește, lista e goală: niciun alt site nu primește voie.
-function readAllowedOrigins(): string[] {
-  const origins: string[] = [];
-  for (const part of (process.env.CORS_ORIGIN ?? "").split(",")) {
-    const origin = part.trim();
-    if (origin !== "") {
-      origins.push(origin);
-    }
-  }
-  return origins;
-}
+import { createAccountRouter } from "./account";
+import { createAdminRouter } from "./admin";
+import { accountCors, allowedAppOrigins } from "./httpConfig";
 
 const app = express();
 app.disable("x-powered-by");
-// CORS: browserul blochează cererile Frontend-ului către Backend când sunt pe adrese diferite
-// (alt port sau alt domeniu, cum va fi pe Azure), dacă Backend-ul nu spune explicit că le acceptă.
+// CORS: doar adresele Frontend-ului din CORS_ORIGINS (sau APP_ORIGIN) au voie să apeleze Backend-ul
+// din browser; cererile de la alte site-uri primesc 403 (src/httpConfig.ts).
 // Atenție: CORS NU înlocuiește autentificarea. Rutele /cases cer în continuare token-ul Supabase.
-app.use(cors({ origin: readAllowedOrigins() }));
+app.use(...accountCors(allowedAppOrigins()));
 // Transformă body-ul JSON al cererii în obiect JS (request.body).
 app.use(express.json());
 
@@ -51,6 +39,8 @@ app.get("/health/db", async (_request, response) => {
 });
 
 app.use("/cases", casesRouter);
+app.use(createAccountRouter());
+app.use(createAdminRouter());
 
 // Handler de erori: Express ajunge aici când o rută aruncă o eroare
 // (de ex. Supabase nu răspunde) sau când body-ul nu e JSON valid.
@@ -64,7 +54,8 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
     response.status(413).json({ error: "Conținutul trimis este prea mare (documentele pot avea maxim 10 MB)" });
     return;
   }
-  console.error(error instanceof Error ? error.message : error);
+  // Do not log request bodies, bearer tokens or upstream error details.
+  console.error('Unhandled backend request error.');
   response.status(500).json({ error: "Eroare internă a serverului" });
 });
 

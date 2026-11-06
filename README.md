@@ -1,5 +1,10 @@
 # MedFlow Backend
 
+Account authentication, invitation-only doctors and QR connection APIs are
+documented in [AUTH_SETUP.md](AUTH_SETUP.md). These routes use the existing public
+Supabase configuration and verified user JWTs; privileged medical-case routes
+below still require a backend-only secret key.
+
 `npm ci`, then `npm run dev` starts the local server on `127.0.0.1:3001`.
 Copy `.env.example` to `.env` and fill Supabase keys. `npm run build` emits `dist/`;
 `npm start` runs the compiled server (`dist/index.js`).
@@ -18,7 +23,7 @@ AI analysis is requested over HTTP from the MedFlow-AI cloud service
 | `AI_URL` | Backend `.env` | MedFlow-AI cloud service, used by `POST /cases/{id}/analysis` (e.g. `http://127.0.0.1:8091`). The Gemini key lives in MedFlow-AI's `.env`. |
 | `MEDGEMMA_URL` | Backend `.env` | Local MedGemma extraction service (e.g. `http://127.0.0.1:8090`) |
 | `HOST` / `PORT` | Backend `.env` | Listen address (default `127.0.0.1:3001`; in a container `0.0.0.0`) |
-| `CORS_ORIGIN` | Backend `.env` | Frontend origins allowed to call the API from a browser, comma-separated (e.g. `http://localhost:5173`). Empty = none. CORS does not replace the token check. |
+| `CORS_ORIGINS` / `APP_ORIGIN` | Backend `.env` | Frontend origins allowed to call the API from a browser (`src/httpConfig.ts`, see `AUTH_SETUP.md`): exact HTTPS origins, HTTP only on localhost. Other origins get `403`. CORS does not replace the token check. |
 
 Never put `SUPABASE_SECRET_KEY` in Frontend or commit `.env`.
 

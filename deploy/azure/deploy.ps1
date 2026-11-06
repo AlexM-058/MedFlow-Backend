@@ -10,7 +10,8 @@
 param(
   # Acelasi registry ca la scriptul din MedFlow-AI.
   [Parameter(Mandatory = $true)] [string] $Registry,
-  # Adresele Frontend-ului care au voie sa apeleze Backend-ul din browser, separate prin virgula.
+  # Adresele Frontend-ului care au voie sa apeleze Backend-ul din browser, separate prin virgula
+  # (devine CORS_ORIGINS). Doar HTTPS, cu exceptia localhost/127.0.0.1.
   [string] $CorsOrigin = "",
   [string] $ResourceGroup = "medflow-rg",
   [string] $Location = "westeurope",
@@ -117,9 +118,11 @@ if (-not $SupabaseUrl -or -not $SupabaseSecretKey) {
 $EnvVars = @(
   "SUPABASE_URL=$SupabaseUrl",
   "SUPABASE_SECRET_KEY=secretref:supabase-secret-key",
-  "AI_URL=$AiUrl",
-  "CORS_ORIGIN=$CorsOrigin"
+  "AI_URL=$AiUrl"
 )
+# CORS_ORIGINS (citit de src/httpConfig.ts) il setam doar daca e dat: src/httpConfig.ts verifica fiecare
+# adresa la pornire, iar o valoare goala ar opri Backend-ul. Fara el, se folosesc adresele locale implicite.
+if ($CorsOrigin) { $EnvVars += "CORS_ORIGINS=$CorsOrigin" }
 
 Write-Host "== 6. Aplicatia $AppName"
 $RegistryUser = az acr credential show --name $Registry --query username -o tsv
