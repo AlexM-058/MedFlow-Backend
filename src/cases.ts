@@ -1,9 +1,17 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { z } from 'zod';
-import { DoctorOrchestrator } from '../../MedFlow-AI/cloud/orchestration/doctor-orchestrator';
+import { DoctorOrchestrator } from '../../AI/cloud/orchestration/doctor-orchestrator';
 import { requireUser, type CurrentUser } from './auth';
+import { ACCEPTED_CONTENT_TYPES, detectMimeType } from './fileType';
+import { extractWithMedGemma } from './medgemma';
 import { supabaseStateStore } from './orchestrationStateStore';
-import { AnalysisBodySchema, CaseIdParamsSchema, CreateCaseBodySchema, MessageBodySchema } from './schemas';
+import {
+  AnalysisBodySchema,
+  CaseIdParamsSchema,
+  CreateCaseBodySchema,
+  DocumentUploadQuerySchema,
+  MessageBodySchema,
+} from './schemas';
 import { getAdminClient } from './supabaseAdmin';
 
 export const casesRouter = Router();
@@ -193,3 +201,83 @@ casesRouter.post('/:id/analysis', async (request, response) => {
   const result = await doctorOrchestrator.processCase(caseSummary, foundCase.id, documentsContext, patientResponse);
   response.json(result);
 });
+
+// Dimensiunea maximă a unui document încărcat. Peste ea, express.raw aruncă
+// o eroare cu type 'entity.too.large', pe care handler-ul din index.ts o transformă în 413.
+const MAX_DOCUMENT_SIZE = '10mb';
+
+// POST /cases/:id/documents?documentType=lab_result — încarcă un document medical (JPG, PNG sau PDF).
+// Body-ul cererii ESTE fișierul (nu JSON), iar header-ul Content-Type spune ce tip are.
+// express.raw citește body-ul ca Buffer (o listă de octeți), dar DOAR pentru tipurile
+// din ACCEPTED_CONTENT_TYPES. Pentru orice alt tip, request.body rămâne undefined.
+casesRouter.post(
+  '/:id/documents',
+  express.raw({ type: ACCEPTED_CONTENT_TYPES, limit: MAX_DOCUMENT_SIZE }),
+  async (request, response) => {
+    const params = CaseIdParamsSchema.safeParse(request.params);
+    if (!params.success) {
+      response.status(400).json({ error: 'Date invalide', details: z.flattenError(params.error).fieldErrors });
+      return;
+    }
+    // Categoria documentului (rețetă, analize...), aleasă de utilizator în Frontend.
+    const query = DocumentUploadQuerySchema.safeParse(request.query);
+    if (!query.success) {
+      response.status(400).json({ error: 'Date invalide', details: z.flattenError(query.error).fieldErrors });
+      return;
+    }
+
+    const file: unknown = request.body;
+    if (!Buffer.isBuffer(file)) {
+      response.status(415).json({
+        error: 'Trimite fișierul în body, cu Content-Type: image/jpeg, image/png sau application/pdf',
+      });
+      return;
+    }
+    if (file.length === 0) {
+      response.status(400).json({ error: 'Fișierul este gol' });
+      return;
+    }
+
+    // Tipul declarat în Content-Type poate fi fals; ne uităm la octeții reali.
+    const mimeType = detectMimeType(file);
+    if (!mimeType) {
+      response.status(415).json({ error: 'Conținutul fișierului nu este un JPG, PNG sau PDF valid' });
+      return;
+    }
+
+    const user = response.locals.user as CurrentUser;
+    const foundCase = await findCaseForUser(params.data.id, user);
+    if (!foundCase) {
+      response.status(404).json({ error: 'Cazul nu a fost găsit' });
+      return;
+    }
+
+    // Trimitem fișierul la MedGemma. Dacă extragerea eșuează, NU salvăm nimic
+    // și îi spunem clientului, ca documentul să poată fi retrimis (nu se pierde în tăcere).
+    const extraction = await extractWithMedGemma(file, mimeType);
+    if (!extraction.ok) {
+      response.status(extraction.status).json({ error: extraction.error });
+      return;
+    }
+
+    // Salvăm DOAR rezultatul extras + metadate despre fișier (migrarea 002 cere metadatele
+    // la fiecare upload). Fișierul brut (variabila `file`) nu ajunge în baza de date.
+    const { data: document, error: insertError } = await getAdminClient()
+      .from('medical_documents')
+      .insert({
+        case_id: foundCase.id,
+        uploaded_by: user.id, // din token, nu din cerere: nimeni nu poate încărca „în numele” altcuiva
+        document_type: query.data.documentType,
+        mime_type: mimeType, // tipul REAL, detectat din octeți, nu cel declarat în Content-Type
+        size_bytes: file.length,
+        extracted_data: extraction.extractedData,
+      })
+      .select('id, case_id, uploaded_by, document_type, mime_type, size_bytes, extracted_data, created_at')
+      .single();
+    if (insertError) {
+      throw new Error('Nu am putut salva documentul: ' + insertError.message);
+    }
+
+    response.status(201).json(document);
+  },
+);

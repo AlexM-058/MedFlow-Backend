@@ -40,6 +40,11 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
     response.status(400).json({ error: "Body-ul cererii nu este JSON valid" });
     return;
   }
+  // express.raw / express.json aruncă eroarea asta când body-ul depășește `limit`.
+  if (typeof error === "object" && error !== null && "type" in error && error.type === "entity.too.large") {
+    response.status(413).json({ error: "Conținutul trimis este prea mare (documentele pot avea maxim 10 MB)" });
+    return;
+  }
   console.error(error instanceof Error ? error.message : error);
   response.status(500).json({ error: "Eroare internă a serverului" });
 });

@@ -2,12 +2,13 @@
 
 `npm ci`, then `npm run dev` starts the local server on `127.0.0.1:3001`.
 Copy `.env.example` to `.env` and fill Supabase keys. `npm run build` emits `dist/`;
-`npm start` runs the compiled server (`dist/MedFlow-Backend/src/index.js`).
+`npm start` runs the compiled server (`dist/Backend/src/index.js`).
 
-The backend imports the AI orchestrator from the sibling folder `../MedFlow-AI`
-(`DoctorOrchestrator`), so the folders must sit side by side and **MedFlow-AI needs
-its own `npm ci`** too. Because of that import, `tsconfig.json` uses `rootDir: ".."`
-and the build writes both `dist/MedFlow-Backend/...` and `dist/MedFlow-AI/...`.
+The backend imports the AI orchestrator (`DoctorOrchestrator`) from `../AI`, the AI
+module folder in the MedFlow superproject (`git clone --recurse-submodules`), so
+**AI needs its own `npm ci`** too (`cd AI && npm ci`). Because of that import,
+`tsconfig.json` uses `rootDir: ".."` and the build writes both `dist/Backend/...`
+and `dist/AI/...`.
 
 ## Environment
 
@@ -17,6 +18,7 @@ and the build writes both `dist/MedFlow-Backend/...` and `dist/MedFlow-AI/...`.
 | `SUPABASE_PUBLISHABLE_KEY` | Backend `.env` | User-scoped client (with JWT) |
 | `SUPABASE_SECRET_KEY` | Backend `.env` only | Service role for trusted DB access |
 | `GEMINI_API_KEY` | Backend `.env` only | Used by `POST /cases/{id}/analysis` (DoctorOrchestrator) |
+| `MEDGEMMA_URL` | Backend `.env` | Local MedGemma extraction service (e.g. `http://127.0.0.1:8090`) |
 | `HOST` / `PORT` | Backend `.env` | Listen address (default `127.0.0.1:3001`) |
 
 Never put `SUPABASE_SECRET_KEY` in Frontend or commit `.env`.
@@ -48,6 +50,7 @@ The caller's id and role (`patient`/`doctor`) come from the token and the
 | `POST /cases` | `{}` or `{"doctorId": "<uuid>"}` | `201` + case | patients |
 | `GET /cases/{id}` | none | `200` + case | the case's patient or doctor |
 | `POST /cases/{id}/messages` | `{"content": "<1-5000 chars>"}` | `201` + message | the case's patient or doctor |
+| `POST /cases/{id}/documents` | raw file bytes (see below) | `201` + document | the case's patient or doctor |
 
 Case: `{"id","patient_id","doctor_id","status","created_at","updated_at"}`;
 a new case starts with `status: "draft"`. The patient is the caller; the doctor is
@@ -89,3 +92,42 @@ always `FINAL`. `GET /cases/{id}` never returns `doctor_orchestration_state`.
 Errors: `400` invalid body or a summary for another patient; `401` no/invalid token;
 `403` caller is not the case's doctor; `404` case missing or not accessible;
 `500` database, privacy-scrubbing or AI (Gemini) failure.
+
+### Medical documents
+
+Requires migration `Database/migrations/002_post_consultation_fixes.sql` (category
+CHECK and upload metadata columns on `medical_documents`).
+
+`POST /cases/{id}/documents?documentType=<category>` takes the file itself as the
+request body (not JSON, not multipart), with `Content-Type: image/jpeg`, `image/png`
+or `application/pdf`, at most 10 MB. `documentType` is the medical category chosen
+by the user: `prescription`, `lab_result`, `medical_letter` or `other` (default
+`other` when omitted). From the Frontend:
+`fetch(url + "?documentType=lab_result", { method: "POST", headers: { Authorization, "Content-Type": file.type }, body: file })`.
+
+The type is checked from the file's first bytes, not only from `Content-Type`.
+The file is sent to the local MedGemma service and **only the extracted result is
+saved** in `medical_documents`, with upload metadata; the raw file is never stored.
+
+Document: `{"id","case_id","uploaded_by","document_type","mime_type","size_bytes","extracted_data","created_at"}`;
+`uploaded_by` is the caller, `document_type` the category, `mime_type` the format
+detected from the file's bytes, `size_bytes` the file size.
+
+Errors: `400` invalid id, invalid `documentType` or empty file; `401`/`404` as above; `413` file over
+10 MB; `415` missing/unsupported `Content-Type` or content that is not a real
+JPG/PNG/PDF; `502` MedGemma answered with an error or an invalid result; `503`
+MedGemma not configured or unreachable; `504` MedGemma did not answer within
+60 s. On `502`/`503`/`504` nothing is saved and the file can be sent again.
+
+#### MedGemma contract (proposed by Backend, to confirm with AI)
+
+`POST {MEDGEMMA_URL}/extract` with the same `Content-Type` and raw file body.
+Expected answer: `200` + `{"extracted_data": { ... }}`, where `extracted_data`
+is a JSON object (stored as-is in the JSONB column). Any other status or shape
+is treated as `502`.
+
+Until the AI service exists, run the mock (synthetic data, ignores the file):
+
+```sh
+npx tsx scripts/mock-medgemma.ts
+```
