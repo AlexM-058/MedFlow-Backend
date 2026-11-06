@@ -1,11 +1,13 @@
 import type { AnalysisOutcome } from './aiClient';
+import type { CaseSummary } from './schemas';
 import { getAdminClient } from './supabaseAdmin';
 
 // Salvează fiecare răspuns al analizei AI în tabelul `ai_analyses` (migrările 001 + 002
 // din MedFlow-Database), ca medicul să-l poată revedea, nu doar o dată, în răspunsul HTTP.
 //
 // Cum se potrivesc câmpurile:
-//   FINAL                  -> status 'completed'
+//   mereu                  -> case_summary = JSON.stringify(caseSummary) (sumarul folosit)
+//   FINAL                 -> status 'completed'
 //                             proposed_options    = cele 3 opțiuni (data.options)
 //                             follow_up_questions = informațiile lipsă (data.missingInformation)
 //                             context_relevance   = { contradictions: data.contradictions }
@@ -21,12 +23,28 @@ function listFrom(value: unknown): unknown[] {
 }
 
 // Întoarce id-ul rândului salvat.
-export async function saveAnalysis(caseId: string, outcome: AnalysisOutcome, model: string | undefined): Promise<string> {
+//
+// caseSummary = sumarul pe care s-a făcut analiza (trimis de medic sau generat din mesaje).
+//   Îl salvăm ca text JSON în case_summary (coloana e TEXT), ca medicul să vadă mereu
+//   pe ce date a lucrat AI-ul.
+// summarizedUntilMessageId = id-ul ultimului mesaj folosit la sumar, DOAR dacă sumarul
+//   a fost generat din case_messages (altfel undefined și coloana rămâne NULL).
+export async function saveAnalysis(
+  caseId: string,
+  outcome: AnalysisOutcome,
+  model: string | undefined,
+  caseSummary: CaseSummary,
+  summarizedUntilMessageId: string | undefined,
+): Promise<string> {
   // model_name e obligatoriu în tabel. Un serviciu AI mai vechi nu trimite modelul.
   const row: Record<string, unknown> = {
     case_id: caseId,
     model_name: model ?? 'necunoscut',
+    case_summary: JSON.stringify(caseSummary),
   };
+  if (summarizedUntilMessageId !== undefined) {
+    row.summarized_until_message_id = summarizedUntilMessageId;
+  }
 
   if (outcome.status === 'FINAL') {
     // `data` vine de la LLM, deci nu ne bazăm pe forma lui: citim câmpurile cu grijă.
