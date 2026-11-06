@@ -27,6 +27,20 @@ export const MessageBodySchema = z.object({
     .max(5000, 'Mesajul poate avea maxim 5000 de caractere'),
 });
 
+// Categoriile de documente medicale. Exact valorile permise de baza de date în
+// medical_documents.document_type (CHECK din migrarea 002 a Database).
+// Dacă se schimbă acolo, trebuie schimbate și aici.
+export const DOCUMENT_CATEGORIES = ['prescription', 'lab_result', 'medical_letter', 'other'] as const;
+
+// Query string pentru POST /cases/:id/documents?documentType=lab_result
+// Body-ul cererii este fișierul însuși, deci categoria nu poate veni în body: vine din adresă.
+// documentType e opțional: dacă lipsește, .default() îl face 'other'.
+export const DocumentUploadQuerySchema = z.object({
+  documentType: z
+    .enum(DOCUMENT_CATEGORIES, 'documentType trebuie să fie: prescription, lab_result, medical_letter sau other')
+    .default('other'),
+});
+
 // Sumarul cazului, exact forma `CaseSummary` din MedFlow-AI/core/schemas/case-summary.ts.
 // Dacă se schimbă acolo, trebuie schimbat și aici (contractul AI <-> Backend).
 const CaseSummarySchema = z.object({
