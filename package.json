@@ -6,7 +6,11 @@
   "scripts": {
     "start": "node dist/Backend/src/index.js",
     "dev": "tsx watch src/index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "test:account": "tsx --test src/account/*.test.ts src/httpConfig.test.ts",
+    "test:admin": "tsx --test src/admin/*.test.ts",
+    "invite:doctor": "tsx scripts/create-doctor-invitation.ts",
+    "invite:revoke": "tsx scripts/revoke-doctor-invitation.ts"
   },
   "keywords": [],
   "author": "",
