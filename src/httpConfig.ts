@@ -7,7 +7,7 @@ export function accountCors(origins: readonly string[]): RequestHandler[] {
   const check: RequestHandler = (request, response, next) => {
     const origin = request.headers.origin;
     if (origin && !allowed.has(origin)) {
-      response.status(403).json({ error: 'This application origin is not allowed.', code: 'ORIGIN_NOT_ALLOWED' });
+      response.status(403).json({ error: 'Originea aplicației nu este permisă.', code: 'ORIGIN_NOT_ALLOWED' });
       return;
     }
     next();

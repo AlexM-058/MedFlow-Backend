@@ -30,14 +30,14 @@ const createBody = z.strictObject({
 });
 
 const errors: Record<string, [number, string]> = {
-  AUTH_REQUIRED: [401, 'Please sign in again.'],
-  NOT_ADMIN: [403, 'This account is not a MedFlow administrator.'],
-  NOT_FOUND: [404, 'The requested invitation is unavailable.'],
-  INVALID_INPUT: [400, 'Invalid request.'],
+  AUTH_REQUIRED: [401, 'Vă rugăm să vă autentificați din nou.'],
+  NOT_ADMIN: [403, 'Acest cont nu este administrator MedFlow.'],
+  NOT_FOUND: [404, 'Invitația cerută nu este disponibilă.'],
+  INVALID_INPUT: [400, 'Cerere invalidă.'],
 };
 
 function fail(response: Response, code: string): void {
-  const [status, message] = errors[code] ?? [503, 'The admin service is temporarily unavailable.'];
+  const [status, message] = errors[code] ?? [503, 'Serviciul de administrare este temporar indisponibil.'];
   response.status(status).json({ error: message, code: errors[code] ? code : 'SERVICE_UNAVAILABLE' });
 }
 

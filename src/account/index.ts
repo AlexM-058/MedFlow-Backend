@@ -16,20 +16,20 @@ const responses = {
   code: z.object({ connectionCode: z.object({ code: opaque }) }),
 };
 const errors: Record<string, [number, string]> = {
-  AUTH_REQUIRED: [401, 'Please sign in again.'], GOOGLE_REQUIRED: [403, 'A verified Google account is required.'],
-  FORBIDDEN: [403, 'This operation is not permitted.'],
-  INVITATION_EMAIL_MISMATCH: [403, 'Sign in using the invited email address.'],
-  INVITATION_EXPIRED: [410, 'This invitation has expired.'],
-  INVITATION_REVOKED: [410, 'This invitation has been revoked.'],
-  INVITATION_USED: [409, 'This invitation has already been used.'],
-  NOT_FOUND: [404, 'The requested resource is unavailable.'],
-  CONNECTION_NOT_PENDING: [409, 'This request has already been processed.'],
-  CONNECTION_CODE_REVOKED: [410, 'This connection link is no longer valid.'],
-  INVALID_INPUT: [400, 'Invalid request.'],
+  AUTH_REQUIRED: [401, 'Vă rugăm să vă autentificați din nou.'], GOOGLE_REQUIRED: [403, 'Este necesar un cont Google verificat.'],
+  FORBIDDEN: [403, 'Această operațiune nu este permisă.'],
+  INVITATION_EMAIL_MISMATCH: [403, 'Autentificați-vă cu adresa de email la care ați primit invitația.'],
+  INVITATION_EXPIRED: [410, 'Această invitație a expirat.'],
+  INVITATION_REVOKED: [410, 'Această invitație a fost revocată.'],
+  INVITATION_USED: [409, 'Această invitație a fost deja folosită.'],
+  NOT_FOUND: [404, 'Resursa cerută nu este disponibilă.'],
+  CONNECTION_NOT_PENDING: [409, 'Această cerere a fost deja procesată.'],
+  CONNECTION_CODE_REVOKED: [410, 'Acest link de conectare nu mai este valid.'],
+  INVALID_INPUT: [400, 'Cerere invalidă.'],
 };
 
 function fail(response: Response, code: string): void {
-  const [status, message] = errors[code] ?? [503, 'The account service is temporarily unavailable.'];
+  const [status, message] = errors[code] ?? [503, 'Serviciul de conturi este temporar indisponibil.'];
   response.status(status).json({ error: message, code: errors[code] ? code : 'SERVICE_UNAVAILABLE' });
 }
 
@@ -46,7 +46,7 @@ export function createAccountLimiter(limit: number, now: () => number = Date.now
       if (counters.size >= capacity) {
         for (const [ip, entry] of counters) if (entry.expires <= time) counters.delete(ip);
         if (counters.size >= capacity) {
-          response.status(429).set('Retry-After', '60').json({ error: 'Please try again later.', code: 'RATE_LIMITED' });
+          response.status(429).set('Retry-After', '60').json({ error: 'Vă rugăm să încercați din nou mai târziu.', code: 'RATE_LIMITED' });
           return;
         }
       }
@@ -55,7 +55,7 @@ export function createAccountLimiter(limit: number, now: () => number = Date.now
     }
     if (previous.count >= limit) {
       response.status(429).set('Retry-After', String(Math.max(1, Math.ceil((previous.expires - time) / 1000))))
-        .json({ error: 'Please try again later.', code: 'RATE_LIMITED' });
+        .json({ error: 'Vă rugăm să încercați din nou mai târziu.', code: 'RATE_LIMITED' });
       return;
     }
     counters.set(key, { ...previous, count: previous.count + 1 });
