@@ -1,10 +1,29 @@
 import "dotenv/config";
+import cors from "cors";
 import express from "express";
 import { casesRouter } from "./cases";
 import { pingDatabase } from "./supabase.js";
 
+// Adresele (origin) Frontend-ului care au voie să apeleze Backend-ul din browser,
+// din CORS_ORIGIN, separate prin virgulă. Ex: "http://localhost:5173,https://medflow.example".
+// Dacă CORS_ORIGIN lipsește, lista e goală: niciun alt site nu primește voie.
+function readAllowedOrigins(): string[] {
+  const origins: string[] = [];
+  for (const part of (process.env.CORS_ORIGIN ?? "").split(",")) {
+    const origin = part.trim();
+    if (origin !== "") {
+      origins.push(origin);
+    }
+  }
+  return origins;
+}
+
 const app = express();
 app.disable("x-powered-by");
+// CORS: browserul blochează cererile Frontend-ului către Backend când sunt pe adrese diferite
+// (alt port sau alt domeniu, cum va fi pe Azure), dacă Backend-ul nu spune explicit că le acceptă.
+// Atenție: CORS NU înlocuiește autentificarea. Rutele /cases cer în continuare token-ul Supabase.
+app.use(cors({ origin: readAllowedOrigins() }));
 // Transformă body-ul JSON al cererii în obiect JS (request.body).
 app.use(express.json());
 

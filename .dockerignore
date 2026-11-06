@@ -1,0 +1,8 @@
+# Ce NU trimitem la `docker build`. Cel mai important: .env (cheile secrete) nu ajunge în imagine.
+.env
+.env.*
+!.env.example
+node_modules
+dist
+*.log
+.git

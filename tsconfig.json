@@ -2,10 +2,10 @@
   // Visit https://aka.ms/tsconfig to read more about this file
   "compilerOptions": {
     // File Layout
-    // ".." (folderul părinte) și nu "./src": Backend-ul importă și codul din ../AI
-    // (DoctorOrchestrator), folderul modulului AI din superproject-ul MedFlow.
-    // De aceea build-ul pune fișierele în dist/Backend/src/... și dist/AI/...
-    "rootDir": "..",
+    // Backend-ul compilează doar codul lui (src/). Analiza AI o cere prin HTTP de la
+    // serviciul MedFlow-AI (src/aiClient.ts), nu mai importă fișiere din ../AI.
+    // De aceea build-ul pune fișierele direct în dist/ (dist/index.js, dist/cases.js...).
+    "rootDir": "./src",
     "outDir": "./dist",
     "noEmitOnError": true,
 
