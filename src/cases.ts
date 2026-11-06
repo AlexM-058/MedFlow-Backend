@@ -1,6 +1,7 @@
 import express, { Router } from 'express';
 import { z } from 'zod';
-import { DoctorOrchestrator } from '../../AI/cloud/orchestration/doctor-orchestrator';
+import { saveAnalysis } from './aiAnalyses';
+import { requestAnalysis } from './aiClient';
 import { requireUser, type CurrentUser } from './auth';
 import { ACCEPTED_CONTENT_TYPES, detectMimeType } from './fileType';
 import { extractWithMedGemma } from './medgemma';
@@ -151,11 +152,6 @@ casesRouter.post('/:id/messages', async (request, response) => {
   response.status(201).json(message);
 });
 
-// Orchestratorul AI pentru medic. Îl creăm o singură dată și îi dăm locul unde
-// își salvează starea (coloana cases.doctor_orchestration_state).
-// Nu păstrează nimic în memorie între request-uri: tot ce trebuie ținut minte e în DB.
-const doctorOrchestrator = new DoctorOrchestrator(supabaseStateStore);
-
 // POST /cases/:id/analysis — analiza AI de suport decizional, DOAR pentru medicul cazului.
 // Răspunsul e { status: 'FINAL', data: analiza } sau { status: 'CLARIFICATION_REQUIRED', data: întrebarea }.
 // Pentru o rundă de clarificare, medicul trimite din nou cererea, cu patientResponse.
@@ -197,9 +193,32 @@ casesRouter.post('/:id/analysis', async (request, response) => {
     return;
   }
 
-  // sessionId = id-ul cazului: așa orchestratorul găsește starea în rândul corect din `cases`.
-  const result = await doctorOrchestrator.processCase(caseSummary, foundCase.id, documentsContext, patientResponse);
-  response.json(result);
+  // Analiza o face serviciul AI (MedFlow-AI/cloud/server.ts), care NU are acces la baza de date.
+  // 1. citim starea rundelor de clarificare din cases.doctor_orchestration_state
+  // 2. i-o trimitem serviciului AI, împreună cu datele cazului
+  // 3. salvăm analiza în ai_analyses, ca medicul s-o poată revedea
+  // 4. salvăm starea nouă pe care ne-o întoarce (null = nu s-a salvat nimic încă)
+  const state = await supabaseStateStore.load(foundCase.id);
+  const analysis = await requestAnalysis({
+    caseId: foundCase.id,
+    caseSummary,
+    documentsContext,
+    patientResponse,
+    state,
+  });
+  if (!analysis.ok) {
+    response.status(analysis.status).json({ error: analysis.error });
+    return;
+  }
+  // Întâi analiza, apoi starea: dacă salvarea analizei eșuează, starea rămâne neschimbată
+  // și medicul poate repeta cererea pentru aceeași rundă (nimic nu se pierde în tăcere).
+  const analysisId = await saveAnalysis(foundCase.id, analysis.result, analysis.model);
+  if (analysis.state !== null) {
+    await supabaseStateStore.save(foundCase.id, analysis.state);
+  }
+
+  // Clientul primește { status, data } ca înainte, plus id-ul analizei salvate.
+  response.json({ ...analysis.result, analysisId });
 });
 
 // Dimensiunea maximă a unui document încărcat. Peste ea, express.raw aruncă
