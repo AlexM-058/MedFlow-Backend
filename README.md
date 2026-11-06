@@ -119,14 +119,21 @@ JPG/PNG/PDF; `502` MedGemma answered with an error or an invalid result; `503`
 MedGemma not configured or unreachable; `504` MedGemma did not answer within
 60 s. On `502`/`503`/`504` nothing is saved and the file can be sent again.
 
-#### MedGemma contract (proposed by Backend, to confirm with AI)
+#### MedGemma contract (implemented by MedFlow-AI)
 
 `POST {MEDGEMMA_URL}/extract` with the same `Content-Type` and raw file body.
 Expected answer: `200` + `{"extracted_data": { ... }}`, where `extracted_data`
 is a JSON object (stored as-is in the JSONB column). Any other status or shape
 is treated as `502`.
 
-Until the AI service exists, run the mock (synthetic data, ignores the file):
+The real service is `MedFlow-AI/edge/extraction_service` (Python + FastAPI + local
+MedGemma via Ollama); start it as described in its README, on port 8090. Its
+`extracted_data` has `medications`, `diagnoses`, `lab_results`, `dates`, `warnings`
+and `source`. Values are text copied from the document; anything not in the document
+is `null` or an empty list, and every value the service removed is listed in `warnings`
+(show them to the doctor).
+
+Without Ollama, run the mock instead (synthetic data, ignores the file, same port):
 
 ```sh
 npx tsx scripts/mock-medgemma.ts
