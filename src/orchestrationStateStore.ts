@@ -1,7 +1,7 @@
 import type {
   OrchestrationState,
   OrchestrationStateStore,
-} from '../../MedFlow-AI/cloud/orchestration/doctor-orchestrator';
+} from '../../AI/cloud/orchestration/doctor-orchestrator';
 import { getAdminClient } from './supabaseAdmin';
 
 // Locul unde DoctorOrchestrator (din MedFlow-AI) își ține starea între request-uri:

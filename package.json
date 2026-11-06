@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node dist/MedFlow-Backend/src/index.js",
+    "start": "node dist/Backend/src/index.js",
     "dev": "tsx watch src/index.ts",
     "build": "tsc"
   },

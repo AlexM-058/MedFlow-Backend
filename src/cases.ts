@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { DoctorOrchestrator } from '../../MedFlow-AI/cloud/orchestration/doctor-orchestrator';
+import { DoctorOrchestrator } from '../../AI/cloud/orchestration/doctor-orchestrator';
 import { requireUser, type CurrentUser } from './auth';
 import { supabaseStateStore } from './orchestrationStateStore';
 import { AnalysisBodySchema, CaseIdParamsSchema, CreateCaseBodySchema, MessageBodySchema } from './schemas';

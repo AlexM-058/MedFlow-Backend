@@ -2,12 +2,13 @@
 
 `npm ci`, then `npm run dev` starts the local server on `127.0.0.1:3001`.
 Copy `.env.example` to `.env` and fill Supabase keys. `npm run build` emits `dist/`;
-`npm start` runs the compiled server (`dist/MedFlow-Backend/src/index.js`).
+`npm start` runs the compiled server (`dist/Backend/src/index.js`).
 
-The backend imports the AI orchestrator from the sibling folder `../MedFlow-AI`
-(`DoctorOrchestrator`), so the folders must sit side by side and **MedFlow-AI needs
-its own `npm ci`** too. Because of that import, `tsconfig.json` uses `rootDir: ".."`
-and the build writes both `dist/MedFlow-Backend/...` and `dist/MedFlow-AI/...`.
+The backend imports the AI orchestrator (`DoctorOrchestrator`) from `../AI`, the AI
+module folder in the MedFlow superproject (`git clone --recurse-submodules`), so
+**AI needs its own `npm ci`** too (`cd AI && npm ci`). Because of that import,
+`tsconfig.json` uses `rootDir: ".."` and the build writes both `dist/Backend/...`
+and `dist/AI/...`.
 
 ## Environment
 
