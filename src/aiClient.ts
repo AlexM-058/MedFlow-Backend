@@ -31,6 +31,9 @@ const AnalysisResponseSchema = z.object({
     data: z.unknown(), // FINAL: analiza pentru medic; CLARIFICATION_REQUIRED: întrebarea (text)
   }),
   state: OrchestrationStateSchema.nullable(),
+  // Modelul LLM care a făcut analiza (ex. "gemini-3-flash-preview"). Opțional: o versiune
+  // mai veche a serviciului AI nu îl trimite.
+  model: z.string().optional(),
 });
 export type AnalysisOutcome = z.infer<typeof AnalysisResponseSchema>['result'];
 
@@ -50,7 +53,7 @@ export type AnalysisRequest = {
 //   504 = serviciul AI nu a răspuns în TIMEOUT_MS
 //   502 = serviciul AI a răspuns, dar cu o eroare sau cu date în format greșit
 export type AnalysisResult =
-  | { ok: true; result: AnalysisOutcome; state: OrchestrationState | null }
+  | { ok: true; result: AnalysisOutcome; state: OrchestrationState | null; model: string | undefined }
   | { ok: false; status: 502 | 503 | 504; error: string };
 
 export async function requestAnalysis(request: AnalysisRequest): Promise<AnalysisResult> {
@@ -102,5 +105,5 @@ export async function requestAnalysis(request: AnalysisRequest): Promise<Analysi
     return { ok: false, status: 502, error: 'Serviciul de analiză AI a întors un răspuns invalid' };
   }
 
-  return { ok: true, result: parsed.data.result, state: parsed.data.state };
+  return { ok: true, result: parsed.data.result, state: parsed.data.state, model: parsed.data.model };
 }

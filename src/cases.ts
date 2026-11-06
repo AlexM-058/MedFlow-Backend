@@ -1,5 +1,6 @@
 import express, { Router } from 'express';
 import { z } from 'zod';
+import { saveAnalysis } from './aiAnalyses';
 import { requestAnalysis } from './aiClient';
 import { requireUser, type CurrentUser } from './auth';
 import { ACCEPTED_CONTENT_TYPES, detectMimeType } from './fileType';
@@ -195,7 +196,8 @@ casesRouter.post('/:id/analysis', async (request, response) => {
   // Analiza o face serviciul AI (MedFlow-AI/cloud/server.ts), care NU are acces la baza de date.
   // 1. citim starea rundelor de clarificare din cases.doctor_orchestration_state
   // 2. i-o trimitem serviciului AI, împreună cu datele cazului
-  // 3. salvăm starea nouă pe care ne-o întoarce (null = nu s-a salvat nimic încă)
+  // 3. salvăm analiza în ai_analyses, ca medicul s-o poată revedea
+  // 4. salvăm starea nouă pe care ne-o întoarce (null = nu s-a salvat nimic încă)
   const state = await supabaseStateStore.load(foundCase.id);
   const analysis = await requestAnalysis({
     caseId: foundCase.id,
@@ -208,12 +210,15 @@ casesRouter.post('/:id/analysis', async (request, response) => {
     response.status(analysis.status).json({ error: analysis.error });
     return;
   }
+  // Întâi analiza, apoi starea: dacă salvarea analizei eșuează, starea rămâne neschimbată
+  // și medicul poate repeta cererea pentru aceeași rundă (nimic nu se pierde în tăcere).
+  const analysisId = await saveAnalysis(foundCase.id, analysis.result, analysis.model);
   if (analysis.state !== null) {
     await supabaseStateStore.save(foundCase.id, analysis.state);
   }
 
-  // Clientul primește aceeași formă ca înainte: { status, data }.
-  response.json(analysis.result);
+  // Clientul primește { status, data } ca înainte, plus id-ul analizei salvate.
+  response.json({ ...analysis.result, analysisId });
 });
 
 // Dimensiunea maximă a unui document încărcat. Peste ea, express.raw aruncă

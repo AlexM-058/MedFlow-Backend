@@ -90,8 +90,14 @@ diagnose or prescribe, and nothing is sent to the patient automatically.
 `CaseSummary` is the shape from `MedFlow-AI/core/schemas/case-summary.ts`;
 `caseSummary.metadata.patientId` must be the case's patient.
 
-Result: `{"status": "CLARIFICATION_REQUIRED", "data": "<question>"}` or
-`{"status": "FINAL", "data": {"options": [...], "missingInformation": [...], "contradictions": [...]}}`.
+Result: `{"status": "CLARIFICATION_REQUIRED", "data": "<question>", "analysisId": "<uuid>"}` or
+`{"status": "FINAL", "data": {"options": [...], "missingInformation": [...], "contradictions": [...]}, "analysisId": "<uuid>"}`.
+The clarification question is in the case's language (`caseSummary.metadata.language`, Romanian by default).
+
+Every result is saved in `ai_analyses` (its id is `analysisId`): `FINAL` as `status: "completed"`
+with `proposed_options` = options, `follow_up_questions` = missing information and
+`context_relevance` = `{"contradictions": [...]}`; `CLARIFICATION_REQUIRED` as `status: "pending"`
+with `follow_up_questions` = `[question]`; `model_name` = the model reported by the AI service.
 
 Rounds are tracked per case in `cases.doctor_orchestration_state` (JSONB), so they
 survive across requests and server restarts. The AI service has no database access:
