@@ -2,9 +2,13 @@ import "dotenv/config";
 import express from "express";
 import { casesRouter } from "./cases";
 import { pingDatabase } from "./supabase.js";
+import { createAccountRouter } from "./account";
+import { createAdminRouter } from "./admin";
+import { accountCors, allowedAppOrigins } from "./httpConfig";
 
 const app = express();
 app.disable("x-powered-by");
+app.use(...accountCors(allowedAppOrigins()));
 // Transformă body-ul JSON al cererii în obiect JS (request.body).
 app.use(express.json());
 
@@ -32,6 +36,8 @@ app.get("/health/db", async (_request, response) => {
 });
 
 app.use("/cases", casesRouter);
+app.use(createAccountRouter());
+app.use(createAdminRouter());
 
 // Handler de erori: Express ajunge aici când o rută aruncă o eroare
 // (de ex. Supabase nu răspunde) sau când body-ul nu e JSON valid.
@@ -45,7 +51,8 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
     response.status(413).json({ error: "Conținutul trimis este prea mare (documentele pot avea maxim 10 MB)" });
     return;
   }
-  console.error(error instanceof Error ? error.message : error);
+  // Do not log request bodies, bearer tokens or upstream error details.
+  console.error('Unhandled backend request error.');
   response.status(500).json({ error: "Eroare internă a serverului" });
 });
 

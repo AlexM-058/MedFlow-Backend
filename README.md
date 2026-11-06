@@ -1,5 +1,10 @@
 # MedFlow Backend
 
+Account authentication, invitation-only doctors and QR connection APIs are
+documented in [AUTH_SETUP.md](AUTH_SETUP.md). These routes use the existing public
+Supabase configuration and verified user JWTs; privileged medical-case routes
+below still require a backend-only secret key.
+
 `npm ci`, then `npm run dev` starts the local server on `127.0.0.1:3001`.
 Copy `.env.example` to `.env` and fill Supabase keys. `npm run build` emits `dist/`;
 `npm start` runs the compiled server (`dist/Backend/src/index.js`).
