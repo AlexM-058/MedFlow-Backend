@@ -9,11 +9,20 @@ import type { FileMimeType } from './fileType';
 //   Header:  Content-Type: image/jpeg | image/png | application/pdf
 //   Body:    octeții fișierului (nu JSON, nu base64)
 //   Răspuns: 200 + { "extracted_data": { ...datele medicale extrase... } }
+//            sau 4xx/5xx + { "error": "mesaj în română" }
 //
 // Fișierul brut rămâne doar în memorie, pe durata cererii. Nu îl salvăm nicăieri.
 
 // Cât așteptăm răspunsul. Un model local poate fi lent pe un PDF cu mai multe pagini.
-const TIMEOUT_MS = 60_000;
+//
+// Legătura cu serviciul (MedFlow-AI/edge/extraction_service/time_budget.py):
+//   serviciul are un buget de EXTRACTION_TIME_BUDGET_SECONDS (implicit 100 s) pe cerere.
+//   Când bugetul se termină, se oprește singur și răspunde 504.
+//   Noi așteptăm 120 s, adică MAI MULT decât bugetul serviciului, cu ~20 s rezervă pentru
+//   trimiterea fișierului și răspuns. Așa, de obicei serviciul se oprește primul și ne spune
+//   ce s-a întâmplat, în loc să renunțăm noi cât timp el încă lucrează.
+//   Dacă mărești bugetul serviciului, mărește și TIMEOUT_MS (bugetul trebuie să rămână mai mic).
+const TIMEOUT_MS = 120_000;
 
 // Ce trebuie să conțină răspunsul MedGemma ca să-l acceptăm.
 // extracted_data trebuie să fie un obiect JSON (nu text, listă sau null),
@@ -22,13 +31,20 @@ const MedGemmaResponseSchema = z.object({
   extracted_data: z.record(z.string(), z.unknown()),
 });
 
+// Forma unui răspuns de eroare al serviciului: { "error": "mesaj" }.
+const MedGemmaErrorSchema = z.object({
+  error: z.string().min(1),
+});
+
 // Rezultatul extragerii: ori datele, ori codul HTTP și mesajul pe care le trimitem clientului.
+//   422 = fișierul e valid, dar serviciul nu a găsit text în el (PDF deteriorat, cu parolă,
+//         poză fără text). `error` e mesajul serviciului, ca utilizatorul să afle motivul.
 //   503 = serviciul nu e configurat sau nu poate fi contactat
 //   504 = serviciul nu a răspuns în TIMEOUT_MS
-//   502 = serviciul a răspuns, dar cu o eroare sau cu date în format greșit
+//   502 = serviciul a răspuns, dar cu altă eroare sau cu date în format greșit
 export type ExtractionResult =
   | { ok: true; extractedData: Record<string, unknown> }
-  | { ok: false; status: 502 | 503 | 504; error: string };
+  | { ok: false; status: 422 | 502 | 503 | 504; error: string };
 
 export async function extractWithMedGemma(file: Buffer, mimeType: FileMimeType): Promise<ExtractionResult> {
   const baseUrl = process.env.MEDGEMMA_URL?.trim();
@@ -59,7 +75,36 @@ export async function extractWithMedGemma(file: Buffer, mimeType: FileMimeType):
     return { ok: false, status: 503, error: 'Serviciul de extragere a datelor nu este disponibil' };
   }
 
-  // Pasul 2: serviciul a răspuns, dar cu o eroare (de ex. 500).
+  // Pasul 2: serviciul a răspuns, dar cu o eroare.
+  //   - 422: documentul nu are text de citit. Trimitem mai departe mesajul serviciului.
+  //     E sigur să-l arătăm: mesajele serviciului sunt fixe, în română, fără date medicale.
+  //   - orice altceva (de ex. 500): 502, cu un mesaj general.
+  if (medGemmaResponse.status === 422) {
+    let errorBody: unknown;
+    try {
+      errorBody = await medGemmaResponse.json();
+    } catch {
+      errorBody = null; // nu e JSON: tratăm mai jos ca pe orice altă eroare (502)
+    }
+    const parsedError = MedGemmaErrorSchema.safeParse(errorBody);
+    if (parsedError.success) {
+      console.error(`MedGemma a răspuns cu HTTP 422: ${parsedError.data.error}`);
+      return { ok: false, status: 422, error: parsedError.data.error };
+    }
+  }
+
+  // 503 / 504 de la serviciu: s-a oprit „curat”, cu un motiv clar (Ollama/modelul nu e disponibil,
+  // sau i s-a terminat timpul alocat). Le dăm mai departe cu același cod, ca utilizatorul să știe
+  // că poate retrimite documentul mai târziu, nu că documentul ar fi greșit.
+  if (medGemmaResponse.status === 503) {
+    console.error('MedGemma a răspuns cu HTTP 503');
+    return { ok: false, status: 503, error: 'Serviciul de extragere a datelor nu este disponibil momentan' };
+  }
+  if (medGemmaResponse.status === 504) {
+    console.error('MedGemma a răspuns cu HTTP 504');
+    return { ok: false, status: 504, error: 'Citirea documentului a durat prea mult. Încercați din nou sau trimiteți mai puține pagini' };
+  }
+
   if (!medGemmaResponse.ok) {
     console.error(`MedGemma a răspuns cu HTTP ${medGemmaResponse.status}`);
     return { ok: false, status: 502, error: 'Serviciul de extragere a datelor a întors o eroare' };

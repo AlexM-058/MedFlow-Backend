@@ -43,7 +43,9 @@ export const DocumentUploadQuerySchema = z.object({
 
 // Sumarul cazului, exact forma `CaseSummary` din MedFlow-AI/core/schemas/case-summary.ts.
 // Dacă se schimbă acolo, trebuie schimbat și aici (contractul AI <-> Backend).
-const CaseSummarySchema = z.object({
+// O folosim de două ori: pentru caseSummary trimis de medic (AnalysisBodySchema, mai jos)
+// și pentru sumarul generat de serviciul AI din mesajele cazului (aiClient.ts, requestCaseSummary).
+export const CaseSummarySchema = z.object({
   chiefComplaint: z.string(),
   onset: z.string(),
   duration: z.string(),
@@ -60,12 +62,19 @@ const CaseSummarySchema = z.object({
     language: z.enum(['ro', 'en']),
   }),
 });
+export type CaseSummary = z.infer<typeof CaseSummarySchema>;
 
-// Body pentru POST /cases/:id/analysis.
-// - prima rundă: doar caseSummary (+ opțional documentsContext)
-// - runda de clarificare: același caseSummary + patientResponse (răspunsul pacientului)
+// Body pentru POST /cases/:id/analysis. Toate câmpurile sunt opționale:
+// - caseSummary: dacă lipsește, Backend-ul îl cere serviciului AI, construit din mesajele cazului
+//   (case_messages). Dacă e trimis, îl folosim pe acesta (trebuie să fie despre pacientul cazului).
+// - language: limba sumarului generat ('ro' implicit). Contează DOAR când caseSummary lipsește;
+//   un caseSummary trimis are deja limba în metadata.language.
+// - documentsContext: text în plus de la medic. Documentele cazului (medical_documents) le
+//   adaugă Backend-ul singur; textul de aici se pune după ele.
+// - patientResponse: în runda de clarificare, răspunsul pacientului.
 export const AnalysisBodySchema = z.object({
-  caseSummary: CaseSummarySchema,
+  caseSummary: CaseSummarySchema.optional(),
+  language: z.enum(['ro', 'en'], 'language trebuie să fie "ro" sau "en"').default('ro'),
   documentsContext: z.string().optional(),
   patientResponse: z
     .string('patientResponse trebuie să fie text')

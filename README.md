@@ -75,6 +75,15 @@ only when the patient has several active doctors).
 Message: `{"id","case_id","sender_role","content","created_at"}`; `sender_role`
 is the caller's role. `content` is trimmed before saving.
 
+Emergency check (patient messages only): after the message is saved, `src/redFlags.ts`
+checks it with fixed rules (no AI, so it works even when the AI service is down): chest pain,
+breathing difficulty, stroke signs, loss of consciousness, suicidal thoughts; Romanian and
+English, with or without diacritics. The patient's answer gets `"safety": {"isEmergency": false}`
+or `"safety": {"isEmergency": true, "message": "<112 warning in Romanian>"}`; on an emergency a
+second `case_messages` row with `sender_role: "system"` and the warning is added (if that insert
+fails the answer is still `201` with `safety`). Doctors' messages are not checked. The rules are a
+copy of `MedFlow-AI/edge/safety/redflags.ts`: keep both in sync. Test: `npx tsx --test src/redFlags.test.ts`.
+
 Errors are JSON `{"error": "...", "details"?: {...}}`:
 `400` invalid JSON, id or body (with `details` per field) or several assigned
 doctors without `doctorId`; `401` missing or invalid token; `403` no profile, or
@@ -90,19 +99,28 @@ diagnose or prescribe, and nothing is sent to the patient automatically.
 
 | Method and path | Body | Success | Who |
 | --- | --- | --- | --- |
-| `POST /cases/{id}/analysis` | `{"caseSummary": CaseSummary, "documentsContext"?: "...", "patientResponse"?: "<1-5000 chars>"}` | `200` + result | only the case's doctor |
+| `POST /cases/{id}/analysis` | `{"caseSummary"?: CaseSummary, "language"?: "ro" \| "en", "documentsContext"?: "...", "patientResponse"?: "<1-5000 chars>"}` | `200` + result | only the case's doctor |
 
-`CaseSummary` is the shape from `MedFlow-AI/core/schemas/case-summary.ts`;
-`caseSummary.metadata.patientId` must be the case's patient.
+`CaseSummary` is the shape from `MedFlow-AI/core/schemas/case-summary.ts`. Both inputs are
+now built automatically (`src/caseContext.ts`):
+- **Case summary:** without `caseSummary`, Backend reads the case's `case_messages` (chronological,
+  `system` rows excluded) and asks the AI service (`POST /case-summary`) to build it, in `language`
+  (default `ro`); no messages yet → `400`. If you send `caseSummary`, its `metadata.patientId` must
+  be the case's patient.
+- **Documents:** the case's `medical_documents` (category, date, `extracted_data`) always go into
+  `documentsContext`; text you send is appended after them. Capped at 20000 characters with an
+  explicit note.
 
-Result: `{"status": "CLARIFICATION_REQUIRED", "data": "<question>", "analysisId": "<uuid>"}` or
-`{"status": "FINAL", "data": {"options": [...], "missingInformation": [...], "contradictions": [...]}, "analysisId": "<uuid>"}`.
+Result: `{"status": "CLARIFICATION_REQUIRED", "data": "<question>", "analysisId", "caseSummaryGenerated", "documentsContextTruncated"}` or
+`{"status": "FINAL", "data": {"options": [...], "missingInformation": [...], "contradictions": [...]}, "analysisId", "caseSummaryGenerated", "documentsContextTruncated"}`.
 The clarification question is in the case's language (`caseSummary.metadata.language`, Romanian by default).
 
 Every result is saved in `ai_analyses` (its id is `analysisId`): `FINAL` as `status: "completed"`
 with `proposed_options` = options, `follow_up_questions` = missing information and
 `context_relevance` = `{"contradictions": [...]}`; `CLARIFICATION_REQUIRED` as `status: "pending"`
-with `follow_up_questions` = `[question]`; `model_name` = the model reported by the AI service.
+with `follow_up_questions` = `[question]`; `model_name` = the model reported by the AI service;
+`case_summary` = JSON text of the summary used; `summarized_until_message_id` = last message used
+(only when the summary was generated).
 
 Rounds are tracked per case in `cases.doctor_orchestration_state` (JSONB), so they
 survive across requests and server restarts. The AI service has no database access:
@@ -141,9 +159,12 @@ detected from the file's bytes, `size_bytes` the file size.
 
 Errors: `400` invalid id, invalid `documentType` or empty file; `401`/`404` as above; `413` file over
 10 MB; `415` missing/unsupported `Content-Type` or content that is not a real
-JPG/PNG/PDF; `502` MedGemma answered with an error or an invalid result; `503`
-MedGemma not configured or unreachable; `504` MedGemma did not answer within
-60 s. On `502`/`503`/`504` nothing is saved and the file can be sent again.
+JPG/PNG/PDF; `422` the file is valid but has no readable text (damaged or password-protected
+PDF, no pages): the extraction service's Romanian message is passed through; `502` the service
+answered with another error or an invalid result; `503` service not configured, unreachable, or
+its model/OCR is unavailable; `504` the document took too long (the service stops at its own
+`EXTRACTION_TIME_BUDGET_SECONDS`, default 100 s; Backend waits at most 120 s — keep the budget
+below that). On `422`/`502`/`503`/`504` nothing is saved and the file can be sent again.
 
 #### MedGemma contract (implemented by MedFlow-AI)
 
