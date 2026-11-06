@@ -131,7 +131,10 @@ if (-not (Test-Az containerapp show --name $AppName --resource-group $ResourceGr
     --secrets "supabase-secret-key=$SupabaseSecretKey" --env-vars $EnvVars -o none
 } else {
   Invoke-Az containerapp secret set --name $AppName --resource-group $ResourceGroup --secrets "supabase-secret-key=$SupabaseSecretKey" -o none
-  Invoke-Az containerapp update --name $AppName --resource-group $ResourceGroup --image $Image --set-env-vars $EnvVars -o none
+  # --revision-suffix: forteaza mereu o versiune (revizie) NOUA. Altfel, un secret schimbat poate sa nu
+  # ajunga in container, iar o revizie actualizata "pe loc" poate ramane blocata (ActivationFailed).
+  Invoke-Az containerapp update --name $AppName --resource-group $ResourceGroup --image $Image --set-env-vars $EnvVars `
+    --revision-suffix ("v" + (Get-Date -Format "MMddHHmmss")) -o none
 }
 
 $Fqdn = az containerapp show --name $AppName --resource-group $ResourceGroup --query properties.configuration.ingress.fqdn -o tsv
