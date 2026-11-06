@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { DoctorOrchestrator } from '../../MedFlow-AI/cloud/orchestration/doctor-orchestrator';
 import { requireUser, type CurrentUser } from './auth';
-import { CaseIdParamsSchema, CreateCaseBodySchema, MessageBodySchema } from './schemas';
+import { supabaseStateStore } from './orchestrationStateStore';
+import { AnalysisBodySchema, CaseIdParamsSchema, CreateCaseBodySchema, MessageBodySchema } from './schemas';
 import { getAdminClient } from './supabaseAdmin';
 
 export const casesRouter = Router();
@@ -139,4 +141,55 @@ casesRouter.post('/:id/messages', async (request, response) => {
   }
 
   response.status(201).json(message);
+});
+
+// Orchestratorul AI pentru medic. Îl creăm o singură dată și îi dăm locul unde
+// își salvează starea (coloana cases.doctor_orchestration_state).
+// Nu păstrează nimic în memorie între request-uri: tot ce trebuie ținut minte e în DB.
+const doctorOrchestrator = new DoctorOrchestrator(supabaseStateStore);
+
+// POST /cases/:id/analysis — analiza AI de suport decizional, DOAR pentru medicul cazului.
+// Răspunsul e { status: 'FINAL', data: analiza } sau { status: 'CLARIFICATION_REQUIRED', data: întrebarea }.
+// Pentru o rundă de clarificare, medicul trimite din nou cererea, cu patientResponse.
+casesRouter.post('/:id/analysis', async (request, response) => {
+  const params = CaseIdParamsSchema.safeParse(request.params);
+  if (!params.success) {
+    response.status(400).json({ error: 'Date invalide', details: z.flattenError(params.error).fieldErrors });
+    return;
+  }
+  const body = AnalysisBodySchema.safeParse(request.body ?? {});
+  if (!body.success) {
+    response.status(400).json({ error: 'Date invalide', details: z.flattenError(body.error).fieldErrors });
+    return;
+  }
+
+  // Analiza conține opțiuni pentru medic: pacientul NU o primește
+  // (AI-ul nu trimite nimic automat pacientului).
+  const user = response.locals.user as CurrentUser;
+  if (user.role !== 'doctor') {
+    response.status(403).json({ error: 'Doar medicul cazului poate cere analiza AI' });
+    return;
+  }
+
+  const foundCase = await findCaseForUser(params.data.id, user);
+  if (!foundCase) {
+    response.status(404).json({ error: 'Cazul nu a fost găsit' });
+    return;
+  }
+  // DB nu verifică rolurile, așa că verificăm explicit că e medicul ACESTUI caz.
+  if (foundCase.doctor_id !== user.id) {
+    response.status(403).json({ error: 'Doar medicul cazului poate cere analiza AI' });
+    return;
+  }
+
+  // Sumarul trebuie să fie despre pacientul acestui caz, nu despre altcineva.
+  const { caseSummary, documentsContext, patientResponse } = body.data;
+  if (caseSummary.metadata.patientId !== foundCase.patient_id) {
+    response.status(400).json({ error: 'caseSummary.metadata.patientId nu este pacientul acestui caz' });
+    return;
+  }
+
+  // sessionId = id-ul cazului: așa orchestratorul găsește starea în rândul corect din `cases`.
+  const result = await doctorOrchestrator.processCase(caseSummary, foundCase.id, documentsContext, patientResponse);
+  response.json(result);
 });

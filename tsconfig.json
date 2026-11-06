@@ -2,7 +2,10 @@
   // Visit https://aka.ms/tsconfig to read more about this file
   "compilerOptions": {
     // File Layout
-    "rootDir": "./src",
+    // ".." (folderul părinte) și nu "./src": Backend-ul importă și codul din ../MedFlow-AI
+    // (DoctorOrchestrator). De aceea build-ul pune fișierele în
+    // dist/MedFlow-Backend/src/... și dist/MedFlow-AI/...
+    "rootDir": "..",
     "outDir": "./dist",
     "noEmitOnError": true,
 
