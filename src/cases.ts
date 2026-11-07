@@ -1,10 +1,13 @@
 import express, { Router } from 'express';
 import { z } from 'zod';
-import { DoctorOrchestrator } from '../../AI/cloud/orchestration/doctor-orchestrator';
+import { saveAnalysis } from './aiAnalyses';
+import { requestAnalysis, requestCaseSummary } from './aiClient';
 import { requireUser, type CurrentUser } from './auth';
+import { buildDocumentsContext, loadCaseMessages } from './caseContext';
 import { ACCEPTED_CONTENT_TYPES, detectMimeType } from './fileType';
 import { extractWithMedGemma } from './medgemma';
 import { supabaseStateStore } from './orchestrationStateStore';
+import { detectRedFlags } from './redFlags';
 import {
   AnalysisBodySchema,
   CaseIdParamsSchema,
@@ -154,13 +157,37 @@ casesRouter.post('/:id/messages', async (request, response) => {
     throw new Error('Nu am putut salva mesajul: ' + insertError.message);
   }
 
-  response.status(201).json(message);
-});
+  // De aici, mesajul e deja salvat. Abia acum verificăm dacă e o urgență.
+  // Mesajele medicului nu le verificăm: regulile sunt pentru simptomele raportate de pacient.
+  if (user.role !== 'patient') {
+    response.status(201).json(message);
+    return;
+  }
 
-// Orchestratorul AI pentru medic. Îl creăm o singură dată și îi dăm locul unde
-// își salvează starea (coloana cases.doctor_orchestration_state).
-// Nu păstrează nimic în memorie între request-uri: tot ce trebuie ținut minte e în DB.
-const doctorOrchestrator = new DoctorOrchestrator(supabaseStateStore);
+  // Reguli fixe (src/redFlags.ts), fără AI: merg chiar dacă serviciul AI e oprit.
+  const redFlag = detectRedFlags(body.data.content);
+  if (!redFlag.isEmergency) {
+    response.status(201).json({ ...message, safety: { isEmergency: false } });
+    return;
+  }
+
+  // E urgență: salvăm avertismentul ca mesaj „system” în caz,
+  // ca să-l vadă și medicul, și pacientul în istoricul cazului.
+  try {
+    const { error: warningError } = await getAdminClient()
+      .from('case_messages')
+      .insert({ case_id: foundCase.id, sender_role: 'system', content: redFlag.message });
+    if (warningError) {
+      console.error('Nu am putut salva avertismentul de urgență pentru cazul', foundCase.id, '-', warningError.message);
+    }
+  } catch (error) {
+    console.error('Nu am putut salva avertismentul de urgență pentru cazul', foundCase.id, '-', error instanceof Error ? error.message : 'eroare necunoscută');
+  }
+  // Chiar dacă avertismentul nu s-a salvat, răspundem 201: mesajul pacientului e deja salvat
+  // (dacă am răspunde cu eroare, pacientul l-ar retrimite), iar avertismentul ajunge
+  // oricum la el, în câmpul `safety`. În log NU scriem conținutul mesajului (date medicale).
+  response.status(201).json({ ...message, safety: { isEmergency: true, message: redFlag.message } });
+});
 
 // POST /cases/:id/analysis — analiza AI de suport decizional, DOAR pentru medicul cazului.
 // Răspunsul e { status: 'FINAL', data: analiza } sau { status: 'CLARIFICATION_REQUIRED', data: întrebarea }.
@@ -196,16 +223,85 @@ casesRouter.post('/:id/analysis', async (request, response) => {
     return;
   }
 
-  // Sumarul trebuie să fie despre pacientul acestui caz, nu despre altcineva.
-  const { caseSummary, documentsContext, patientResponse } = body.data;
-  if (caseSummary.metadata.patientId !== foundCase.patient_id) {
-    response.status(400).json({ error: 'caseSummary.metadata.patientId nu este pacientul acestui caz' });
-    return;
+  // Pasul A: sumarul cazului (CaseSummary).
+  //   - dacă medicul l-a trimis, îl folosim, dar doar dacă e despre pacientul ACESTUI caz;
+  //   - dacă nu, îl cerem serviciului AI, construit din mesajele cazului (case_messages).
+  let caseSummary = body.data.caseSummary;
+  let caseSummaryGenerated = false;
+  let summarizedUntilMessageId: string | undefined = undefined;
+  if (caseSummary !== undefined) {
+    if (caseSummary.metadata.patientId !== foundCase.patient_id) {
+      response.status(400).json({ error: 'caseSummary.metadata.patientId nu este pacientul acestui caz' });
+      return;
+    }
+  } else {
+    const messages = await loadCaseMessages(foundCase.id);
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage === undefined) {
+      response.status(400).json({
+        error: 'Cazul nu are încă mesaje. Analiza AI are nevoie de mesajele pacientului (sau trimite caseSummary în body).',
+      });
+      return;
+    }
+    // patientId vine din caz (din DB), nu din cerere: sumarul e mereu despre pacientul cazului.
+    const summary = await requestCaseSummary({
+      caseId: foundCase.id,
+      patientId: foundCase.patient_id,
+      language: body.data.language,
+      messages,
+    });
+    if (!summary.ok) {
+      response.status(summary.status).json({ error: summary.error });
+      return;
+    }
+    caseSummary = summary.caseSummary;
+    caseSummaryGenerated = true;
+    summarizedUntilMessageId = lastMessage.id; // până unde am citit conversația
   }
 
-  // sessionId = id-ul cazului: așa orchestratorul găsește starea în rândul corect din `cases`.
-  const result = await doctorOrchestrator.processCase(caseSummary, foundCase.id, documentsContext, patientResponse);
-  response.json(result);
+  // Pasul B: documentele cazului (medical_documents) devin text pentru analiză,
+  // plus textul trimis de medic în documentsContext (dacă există), pus la final.
+  const documents = await buildDocumentsContext(foundCase.id, body.data.documentsContext);
+
+  // Pasul C: analiza o face serviciul AI (MedFlow-AI/cloud/server.ts), care NU are acces la baza de date.
+  // 1. citim starea rundelor de clarificare din cases.doctor_orchestration_state
+  // 2. i-o trimitem serviciului AI, împreună cu datele cazului
+  // 3. salvăm analiza în ai_analyses (cu sumarul folosit), ca medicul s-o poată revedea
+  // 4. salvăm starea nouă pe care ne-o întoarce (null = nu s-a salvat nimic încă)
+  const state = await supabaseStateStore.load(foundCase.id);
+  const analysis = await requestAnalysis({
+    caseId: foundCase.id,
+    caseSummary,
+    documentsContext: documents.text,
+    patientResponse: body.data.patientResponse,
+    state,
+  });
+  if (!analysis.ok) {
+    response.status(analysis.status).json({ error: analysis.error });
+    return;
+  }
+  // Întâi analiza, apoi starea: dacă salvarea analizei eșuează, starea rămâne neschimbată
+  // și medicul poate repeta cererea pentru aceeași rundă (nimic nu se pierde în tăcere).
+  const analysisId = await saveAnalysis(
+    foundCase.id,
+    analysis.result,
+    analysis.model,
+    caseSummary,
+    summarizedUntilMessageId,
+  );
+  if (analysis.state !== null) {
+    await supabaseStateStore.save(foundCase.id, analysis.state);
+  }
+
+  // Clientul primește { status, data } ca înainte, plus id-ul analizei salvate și două informații:
+  //   caseSummaryGenerated      = true dacă sumarul a fost făcut de AI din mesajele cazului
+  //   documentsContextTruncated = true dacă textul documentelor a fost tăiat (nu tot a ajuns la AI)
+  response.json({
+    ...analysis.result,
+    analysisId,
+    caseSummaryGenerated,
+    documentsContextTruncated: documents.truncated,
+  });
 });
 
 // Dimensiunea maximă a unui document încărcat. Peste ea, express.raw aruncă

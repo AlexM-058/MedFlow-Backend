@@ -10,6 +10,9 @@ import { accountCors, allowedAppOrigins } from "./httpConfig";
 
 const app = express();
 app.disable("x-powered-by");
+// CORS: doar adresele Frontend-ului din CORS_ORIGINS (sau APP_ORIGIN) au voie să apeleze Backend-ul
+// din browser; cererile de la alte site-uri primesc 403 (src/httpConfig.ts).
+// Atenție: CORS NU înlocuiește autentificarea. Rutele /cases cer în continuare token-ul Supabase.
 app.use(...accountCors(allowedAppOrigins()));
 // Transformă body-ul JSON al cererii în obiect JS (request.body).
 app.use(express.json());
