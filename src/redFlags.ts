@@ -6,8 +6,8 @@
 // dacă adaugi sau scoți o regulă într-un loc, fă la fel și în celălalt.
 //
 // De ce verificarea stă în Backend și nu în serviciul AI:
-// serviciul AI poate fi oprit (pe Azure pornește abia la prima cerere și îi ia
-// până la ~1 minut). Avertismentul de urgență trebuie să ajungă la pacient imediat,
+// serviciul AI poate fi oprit sau lent la pornire (ex.: un agent local care nu rulează,
+// sau un model care se încarcă ~1 minut). Avertismentul de urgență trebuie să ajungă la pacient imediat,
 // chiar dacă AI-ul nu răspunde. De aceea aici NU există niciun LLM: doar o listă
 // fixă de expresii, verificată cu cod simplu. Regulile nu pun diagnostice; doar
 // îi spun pacientului să sune la 112.

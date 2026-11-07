@@ -4,7 +4,7 @@ import { CaseSummarySchema, type CaseSummary } from './schemas';
 // Clientul pentru serviciul HTTP al AI-ului (MedFlow-AI/cloud/server.ts), care face analiza
 // de suport decizional pentru medic (DoctorOrchestrator + Gemini).
 // Înlocuiește importul direct al fișierelor din ../../AI: așa Backend-ul se compilează
-// și se publică singur (de ex. pe Azure), iar AI-ul rulează ca serviciu separat.
+// și rulează singur, iar AI-ul rulează ca serviciu separat (local sau în altă parte).
 //
 // Contract (descris în MedFlow-AI/README.md):
 //   POST {AI_URL}/analysis

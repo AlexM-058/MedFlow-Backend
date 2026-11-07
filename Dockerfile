@@ -1,4 +1,4 @@
-# Imaginea Docker a Backend-ului MedFlow (de exemplu pentru Azure Container Apps).
+# Imaginea Docker a Backend-ului MedFlow (opțională; MVP-ul rulează local, cu agenți locali).
 #
 # Construire (din folderul MedFlow-Backend):
 #   docker build -t medflow-backend .
@@ -22,7 +22,7 @@ RUN npm run build
 FROM node:22-slim
 WORKDIR /app
 # HOST=0.0.0.0: într-un container trebuie să ascultăm pe toate interfețele,
-# altfel Azure (sau `docker run -p`) nu poate ajunge la server.
+# altfel `docker run -p` nu poate ajunge la server.
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3001
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev

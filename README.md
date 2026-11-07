@@ -27,7 +27,7 @@ AI analysis is requested over HTTP from the MedFlow-AI cloud service
 
 Never put `SUPABASE_SECRET_KEY` in Frontend or commit `.env`.
 
-## Docker (e.g. Azure Container Apps)
+## Docker (optional)
 
 ```sh
 docker build -t medflow-backend .
@@ -36,7 +36,7 @@ docker run --rm --env-file .env -e HOST=0.0.0.0 -p 3001:3001 medflow-backend
 
 Two stages: `npm ci` + `npm run build`, then a final `node:22-slim` image with only `dist/`
 and production dependencies, running as the `node` user. `.dockerignore` keeps `.env` out
-of the image: on Azure, set the variables above as app settings / secrets instead.
+of the image: pass the variables above at run time (`--env-file` or `-e`) instead.
 
 ## HTTP contract
 
