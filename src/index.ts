@@ -3,6 +3,9 @@ import express from "express";
 import { casesRouter } from "./cases";
 import { createCaseViewsRouter } from "./caseViews";
 import { createPatientContextRouter } from "./patientContext";
+import { createLocalAgentClient } from "./localAgent";
+import { createLocalAgentRouter } from "./localAgentRoutes";
+import { createDemoIntakeRouter } from "./demoIntake";
 import { pingDatabase } from "./supabase.js";
 import { createAccountRouter } from "./account";
 import { createAdminRouter } from "./admin";
@@ -19,6 +22,15 @@ app.use(express.json());
 
 app.get("/health", (_request, response) => {
   response.json({ status: "ok", service: "medflow-backend" });
+});
+
+app.get('/health/local-agent', async (_request, response) => {
+  response.set('Cache-Control', 'no-store');
+  const result = await createLocalAgentClient()('ready');
+  if (!result.ok || result.data.status !== 'ready') {
+    response.status(503).json({ status: 'unavailable', service: 'medflow-local-agent' }); return;
+  }
+  response.json({ status: 'ready', service: 'medflow-local-agent' });
 });
 
 /** Checks Supabase using SUPABASE_URL + SUPABASE_SECRET_KEY from Backend/.env */
@@ -41,6 +53,8 @@ app.get("/health/db", async (_request, response) => {
 });
 
 app.use("/patient/context", createPatientContextRouter());
+app.use("/demo", createDemoIntakeRouter());
+app.use("/cases", createLocalAgentRouter());
 app.use("/cases", createCaseViewsRouter());
 app.use("/cases", casesRouter);
 app.use(createAccountRouter());
