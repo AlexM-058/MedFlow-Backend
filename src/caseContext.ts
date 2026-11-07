@@ -1,4 +1,5 @@
 import { getAdminClient } from './supabaseAdmin';
+import { confirmedMedicationsFromReview } from './reviewData';
 
 // Citește din baza de date ce are nevoie analiza AI despre un caz:
 //   - mesajele cazului (case_messages), din care serviciul AI face sumarul cazului
@@ -50,6 +51,24 @@ export type DocumentsContext = {
   truncated: boolean; // true = textul a fost tăiat la MAX_DOCUMENTS_CONTEXT_CHARS
 };
 
+// Starea verificării și datele unui document, pentru textul trimis AI-ului.
+//   - verificat de pacient: medicamentele sunt cele confirmate (nu ce a citit cititorul);
+//   - neverificat: datele rămân, dar marcate clar, ca să nu fie tratate drept fapt.
+export function describeDocumentData(extracted: unknown, review: unknown, reviewedAt: unknown): string {
+  // extracted_data e NULL dacă nu s-a extras nimic; scriem asta explicit, nu sărim documentul.
+  if (extracted === null || extracted === undefined) return 'Date extrase: (fără date extrase)';
+  const confirmed = confirmedMedicationsFromReview(review);
+  if (confirmed && typeof extracted === 'object') {
+    const when = typeof reviewedAt === 'string' ? ` la ${reviewedAt}` : '';
+    const data = { ...(extracted as Record<string, unknown>), medications: confirmed };
+    return `Verificare pacient: medicamentele au fost confirmate de pacient${when}\nDate (JSON):\n${JSON.stringify(data, null, 2)}`;
+  }
+  return (
+    'Verificare pacient: NECONFIRMAT. Datele au fost extrase automat din document și pot conține erori de citire.\n' +
+    `Date extrase (JSON):\n${JSON.stringify(extracted, null, 2)}`
+  );
+}
+
 // Construiește textul `documentsContext` pentru analiza AI:
 //   1. citim documentele cazului, în ordinea în care au fost încărcate
 //   2. pentru fiecare document scriem un bloc: categoria, data încărcării și datele extrase (JSON)
@@ -65,7 +84,7 @@ export type DocumentsContext = {
 export async function buildDocumentsContext(caseId: string, extraContext: string | undefined): Promise<DocumentsContext> {
   const { data, error } = await getAdminClient()
     .from('medical_documents')
-    .select('document_type, created_at, extracted_data')
+    .select('document_type, created_at, extracted_data, review, reviewed_at')
     .eq('case_id', caseId)
     .order('created_at', { ascending: true });
   if (error) {
@@ -76,16 +95,11 @@ export async function buildDocumentsContext(caseId: string, extraContext: string
   let documentNumber = 0;
   for (const document of data) {
     documentNumber++;
-    // extracted_data e NULL dacă nu s-a extras nimic; scriem asta explicit, nu sărim documentul.
-    let extracted = '(fără date extrase)';
-    if (document.extracted_data !== null && document.extracted_data !== undefined) {
-      extracted = JSON.stringify(document.extracted_data, null, 2);
-    }
     blocks.push(
       `--- Document ${documentNumber} din ${data.length} ---\n` +
         `Categorie: ${document.document_type}\n` +
         `Încărcat la: ${document.created_at}\n` +
-        `Date extrase (JSON):\n${extracted}`,
+        describeDocumentData(document.extracted_data, document.review, document.reviewed_at),
     );
   }
 

@@ -1,7 +1,8 @@
-// Serviciu MedGemma FALS, doar pentru teste locale, până când echipa AI
-// face serviciul real. Respectă contractul din src/medgemma.ts:
+// Serviciu de extragere FALS, doar pentru teste locale, când serviciul real
+// (AI/edge/extraction_service) nu rulează. Respectă contractul din src/medgemma.ts
+// și din AI/edge/extraction_service/schemas.py:
 //   POST /extract, body = octeții fișierului -> 200 + { "extracted_data": {...} }
-// Nu citește documentul: întoarce mereu aceleași date sintetice.
+// Nu citește documentul: întoarce mereu aceeași rețetă sintetică (date fictive).
 //
 // Pornire (din folderul Backend):  npx tsx scripts/mock-medgemma.ts
 // Apoi în Backend/.env:            MEDGEMMA_URL=http://127.0.0.1:8090
@@ -16,17 +17,19 @@ app.post('/extract', express.raw({ type: () => true, limit: '20mb' }), (request,
 
   response.json({
     extracted_data: {
-      source: 'mock-medgemma',
-      document_kind: 'lab_result',
-      values: [
-        { name: 'Hemoglobină', value: 13.5, unit: 'g/dL' },
-        { name: 'Glicemie', value: 92, unit: 'mg/dL' },
+      medications: [
+        { name: 'Amlodipină', dose: '5 mg', frequency: '1 comprimat dimineața', duration: '30 de zile' },
+        { name: 'Metformin', dose: null, frequency: '2 comprimate pe zi', duration: null },
       ],
-      note: 'Date sintetice generate de mock, nu de MedGemma.',
+      diagnoses: [],
+      lab_results: [],
+      dates: [{ label: 'Data', value: '14.03.2025' }],
+      warnings: ['Date sintetice generate de mock, nu de serviciul real. Doza pentru Metformin este lăsată ilizibilă intenționat.'],
+      source: { model: 'mock-medgemma', input_kind: 'image', pages: 1 },
     },
   });
 });
 
 app.listen(port, '127.0.0.1', () => {
-  console.log(`Mock MedGemma: http://127.0.0.1:${port}/extract`);
+  console.log(`Mock extragere: http://127.0.0.1:${port}/extract`);
 });

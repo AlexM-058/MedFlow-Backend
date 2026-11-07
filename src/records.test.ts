@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generatePrescriptionSummary, generateClinicalSummary } from './records';
+import { generatePrescriptionSummary, generateClinicalSummary, pickDocumentDate } from './records';
 
 test('generatePrescriptionSummary with no medications returns clear message', () => {
   const result = generatePrescriptionSummary([]);
@@ -42,4 +42,18 @@ test('generateClinicalSummary synthesizes diagnoses, treatments and lab tests', 
   assert.ok(result.includes('Hipertensiune arterială, Diabet zaharat tip 2'));
   assert.ok(result.includes('Tratamente prescrise: 3 produse.'));
   assert.ok(result.includes('Analize de laborator: 5 parametri înregistrați.'));
+});
+
+test('pickDocumentDate prefers a date labelled as the prescription date over the first date found', () => {
+  assert.equal(
+    pickDocumentDate([{ label: 'Născut la', value: '01.01.1950' }, { label: 'Data emiterii', value: '14.03.2025' }]),
+    '14.03.2025',
+  );
+});
+
+test('pickDocumentDate falls back to the first usable date and tolerates bad input', () => {
+  assert.equal(pickDocumentDate([{ label: null, value: null }, { label: 'x', value: '02.02.2024' }]), '02.02.2024');
+  assert.equal(pickDocumentDate([]), null);
+  assert.equal(pickDocumentDate(undefined), null);
+  assert.equal(pickDocumentDate([null, 5, 'x']), null);
 });

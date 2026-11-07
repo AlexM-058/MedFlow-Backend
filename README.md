@@ -67,6 +67,7 @@ The caller's id and role (`patient`/`doctor`) come from the token and the
 | `GET /cases/{id}` | none | `200` + case | the case's patient or doctor |
 | `POST /cases/{id}/messages` | `{"content": "<1-5000 chars>"}` | `201` + message | the case's patient or doctor |
 | `POST /cases/{id}/documents` | raw file bytes (see below) | `201` + document | the case's patient or doctor |
+| `POST /cases/{id}/documents/{docId}/review` | `{"fields": [ReviewedField]}` (see below) | `200` + document | the case's patient only |
 
 For a **doctor**, `GET /cases` adds three read-only fields to every case (additive; existing fields are unchanged, patients never receive them):
 `last_message` (`{"sender_role","content" (max 140 chars),"created_at"}` or `null`; system messages are skipped),
@@ -146,7 +147,9 @@ not changed and the request can be sent again.
 ### Medical documents
 
 Requires migration `Database/migrations/002_post_consultation_fixes.sql` (category
-CHECK and upload metadata columns on `medical_documents`).
+CHECK and upload metadata columns on `medical_documents`) and
+`008_document_review.sql` (columns `review`, `reviewed_by`, `reviewed_at`). **Apply 008 before
+deploying this Backend version**: the document queries select those columns.
 
 `POST /cases/{id}/documents?documentType=<category>` takes the file itself as the
 request body (not JSON, not multipart), with `Content-Type: image/jpeg`, `image/png`
@@ -159,7 +162,8 @@ The type is checked from the file's first bytes, not only from `Content-Type`.
 The file is sent to the local MedGemma service and **only the extracted result is
 saved** in `medical_documents`, with upload metadata; the raw file is never stored.
 
-Document: `{"id","case_id","uploaded_by","document_type","mime_type","size_bytes","extracted_data","created_at"}`;
+Document: `{"id","case_id","uploaded_by","document_type","mime_type","size_bytes","extracted_data","review","reviewed_by","reviewed_at","created_at"}`
+(`review`, `reviewed_by`, `reviewed_at` are `null` until the patient reviews the document);
 `uploaded_by` is the caller, `document_type` the category, `mime_type` the format
 detected from the file's bytes, `size_bytes` the file size.
 
@@ -170,14 +174,37 @@ PDF, no pages): the extraction service's Romanian message is passed through; `50
 answered with another error or an invalid result; `503` service not configured, unreachable, or
 its model/OCR is unavailable; `504` the document took too long (the service stops at its own
 `EXTRACTION_TIME_BUDGET_SECONDS`, default 100 s; Backend waits at most 120 s — keep the budget
-below that). On `422`/`502`/`503`/`504` nothing is saved and the file can be sent again.
+below that). On `422`/`502`/`503`/`504` **nothing is saved** (no row, no placeholder) and the body is
+`{"error": "<Romanian message>", "code": "EXTRACTION_FAILED"}`; the file stays on the patient's device
+and can be sent again. (Earlier versions answered `201` with an `extraction_status: unavailable` stub; clients
+should still treat such old rows as "not read".)
+
+#### Patient review of a prescription
+
+The extraction can misread a photo, so the patient checks every medication against the paper
+prescription. `POST /cases/{id}/documents/{docId}/review` with
+`{"fields": [{"path": "medications.0.dose", "label", "extracted", "value", "confirmation": {"status": "confirmed", "by": "patient", "at": "<ISO>"}, "sourceQuote"?}]}`
+saves the result in `medical_documents.review` (`extracted_data` is never overwritten):
+
+- every medication of the document needs all four fields (`name`, `dose`, `frequency`, `duration`);
+- `extracted` must equal what the service read (the client cannot change it);
+- `value` is the patient's text, kept verbatim; only `duration` may be `null` ("not on the prescription");
+- an unreadable field (`extracted: null`) needs a `value` typed from the paper prescription.
+
+Errors: `400` malformed body, `403` not a patient, `404` case/document not available to the caller,
+`422` the review does not match the document (missing/duplicate/forged field, empty value).
+Only medications from a reviewed document appear in the **active treatment** summary
+(`prescriptions` medical record) and are marked as confirmed in the AI `documentsContext`;
+unreviewed documents are labelled `NECONFIRMAT` there.
 
 #### MedGemma contract (implemented by MedFlow-AI)
 
 `POST {MEDGEMMA_URL}/extract` with the same `Content-Type` and raw file body.
-Expected answer: `200` + `{"extracted_data": { ... }}`, where `extracted_data`
-is a JSON object (stored as-is in the JSONB column). Any other status or shape
-is treated as `502`.
+Expected answer: `200` + `{"extracted_data": { ... }}`, where `extracted_data` has the shape below
+(validated; stored as-is in the JSONB column, unknown extra fields are kept). Any other status
+or shape is treated as `502`:
+`medications[{name,dose,frequency,duration}]`, `diagnoses[]`, `lab_results[{test,value,unit,reference_range}]`,
+`dates[{label,value}]`, `warnings[]` (values are text or `null`).
 
 The real service is `MedFlow-AI/edge/extraction_service` (Python + FastAPI + local
 MedGemma via Ollama); start it as described in its README, on port 8090. Its

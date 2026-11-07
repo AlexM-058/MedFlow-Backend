@@ -28,6 +28,10 @@ export const casesRouter = Router();
 // Toate rutele de mai jos cer un utilizator autentificat.
 casesRouter.use(requireUser);
 
+// Coloanele unui document medical (review = verificarea pacientului, vezi documentReview.ts).
+const DOCUMENT_COLUMNS =
+  'id, case_id, uploaded_by, document_type, mime_type, size_bytes, extracted_data, review, reviewed_by, reviewed_at, created_at';
+
 // Coloanele pe care le trimitem înapoi pentru un caz.
 const CASE_COLUMNS = 'id, patient_id, doctor_id, status, created_at, updated_at';
 
@@ -354,13 +358,15 @@ casesRouter.post(
       return;
     }
 
-    // Încercăm extragerea automată cu MedGemma dacă este disponibil serviciul.
-    // Dacă serviciul e offline sau indisponibil, documentul se salvează oricum în DB
-    // pentru a nu pierde fișierul și metadatele pacientului.
+    // Extragerea automată (OCR + model local). Dacă nu reușește, NU salvăm niciun rând: documentul
+    // rămâne pe dispozitivul pacientului, care poate reîncerca (un rând „gol” ar părea o rețetă citită,
+    // iar reîncercarea ar crea duplicate). Răspundem cu codul real: 422, 502, 503 sau 504.
     const extraction = await extractWithMedGemma(file, mimeType);
-    const extractedData = extraction.ok
-      ? extraction.extractedData
-      : { extraction_status: 'unavailable', error: extraction.error };
+    if (!extraction.ok) {
+      response.status(extraction.status).json({ error: extraction.error, code: 'EXTRACTION_FAILED' });
+      return;
+    }
+    const extractedData = extraction.extractedData;
 
     // Salvăm rezultatul extras + metadate despre fișier.
     const { data: document, error: insertError } = await getAdminClient()
@@ -373,19 +379,18 @@ casesRouter.post(
         size_bytes: file.length,
         extracted_data: extractedData,
       })
-      .select('id, case_id, uploaded_by, document_type, mime_type, size_bytes, extracted_data, created_at')
+      .select(DOCUMENT_COLUMNS)
       .single();
     if (insertError) {
       throw new Error('Nu am putut salva documentul: ' + insertError.message);
     }
 
-    // Actualizăm sumarul de rețete și sumarul dosarului dacă avem date extrase
-    if (extraction.ok) {
-      try {
-        await updatePatientSummariesFromDocuments(foundCase.patient_id);
-      } catch (sumError) {
-        console.error('Nu am putut actualiza sumarele pacientului:', sumError);
-      }
+    // Actualizăm sumarul dosarului (diagnostice, analize). „Tratament activ” se schimbă abia după
+    // ce pacientul verifică rețeta (POST /cases/:id/documents/:docId/review).
+    try {
+      await updatePatientSummariesFromDocuments(foundCase.patient_id);
+    } catch (sumError) {
+      console.error('Nu am putut actualiza sumarele pacientului:', sumError);
     }
 
     response.status(201).json(document);
@@ -408,7 +413,7 @@ casesRouter.get('/:id/documents', async (request, response) => {
 
   const { data: docs, error } = await getAdminClient()
     .from('medical_documents')
-    .select('id, case_id, uploaded_by, document_type, mime_type, size_bytes, extracted_data, created_at')
+    .select(DOCUMENT_COLUMNS)
     .eq('case_id', foundCase.id)
     .order('created_at', { ascending: false });
 

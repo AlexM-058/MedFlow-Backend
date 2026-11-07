@@ -1,3 +1,4 @@
+import { confirmedMedicationsFromReview } from './reviewData';
 import { getAdminClient } from './supabaseAdmin';
 
 export interface MedicationItem {
@@ -53,6 +54,19 @@ export function generatePrescriptionSummary(
   });
 
   return `Tratament activ (${allMeds.length} ${allMeds.length === 1 ? 'medicament' : 'medicamente'}): ${items.join('; ')}.`;
+}
+
+/**
+ * Data rețetei dintre datele găsite în document: prima cu o etichetă de tip „data”, „emis”, „prescris”;
+ * altfel prima dată din listă. Datele vin ca text, exact cum apar în document.
+ */
+export function pickDocumentDate(dates: unknown): string | null {
+  if (!Array.isArray(dates)) return null;
+  const items = dates.filter((d): d is { label?: unknown; value?: unknown } => !!d && typeof d === 'object');
+  const valueOf = (d: { value?: unknown }) => (typeof d.value === 'string' && d.value.trim() ? d.value.trim() : null);
+  const labelled = items.find((d) => typeof d.label === 'string' && /\b(data|emis|emisă|emisa|prescris|prescrisă|prescrisa)\b/i.test(d.label) && valueOf(d));
+  const chosen = labelled ?? items.find((d) => valueOf(d));
+  return chosen ? valueOf(chosen) : null;
 }
 
 /**
@@ -166,7 +180,7 @@ export async function updatePatientSummariesFromDocuments(
   // 2. Citim documentele pacientului (după case_id sau uploaded_by)
   let documentsQuery = supabase
     .from('medical_documents')
-    .select('id, case_id, document_type, extracted_data, created_at')
+    .select('id, case_id, document_type, extracted_data, review, created_at')
     .order('created_at', { ascending: false });
 
   if (caseIds.length > 0) {
@@ -190,29 +204,18 @@ export async function updatePatientSummariesFromDocuments(
     const rawData = doc.extracted_data as Record<string, unknown> | null;
     if (!rawData || typeof rawData !== 'object') continue;
 
-    // Extragem rețetele
-    const rawMeds = Array.isArray(rawData.medications) ? rawData.medications : [];
-    if (rawMeds.length > 0) {
-      const docDate = Array.isArray(rawData.dates) && rawData.dates[0] && typeof rawData.dates[0] === 'object'
-        ? (rawData.dates[0] as { value?: string }).value ?? null
-        : null;
-
-      const medications: MedicationItem[] = rawMeds.map((m: any) => ({
-        name: String(m.name ?? '').trim(),
-        dose: m.dose ? String(m.dose).trim() : null,
-        frequency: m.frequency ? String(m.frequency).trim() : null,
-        duration: m.duration ? String(m.duration).trim() : null,
-      })).filter((m) => m.name.length > 0);
-
-      if (medications.length > 0) {
-        totalMedsCount += medications.length;
-        prescriptionsList.push({
-          documentId: doc.id,
-          documentType: doc.document_type,
-          date: docDate,
-          medications,
-        });
-      }
+    // Medicamentele intră în „Tratament activ” DOAR după ce pacientul a verificat rețeta (doc.review).
+    // Ce a citit cititorul din poză (extracted_data) poate conține greșeli de citire și nu se
+    // prezintă ca tratament al pacientului. Rețetele neverificate nu apar aici.
+    const confirmedMeds = confirmedMedicationsFromReview(doc.review);
+    if (confirmedMeds && confirmedMeds.length > 0) {
+      totalMedsCount += confirmedMeds.length;
+      prescriptionsList.push({
+        documentId: doc.id,
+        documentType: doc.document_type,
+        date: pickDocumentDate(rawData.dates),
+        medications: confirmedMeds,
+      });
     }
 
     // Extragem diagnosticele

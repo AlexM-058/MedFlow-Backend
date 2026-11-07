@@ -31,8 +31,21 @@ const TIMEOUT_MS = Number.isFinite(configuredTimeout) && configuredTimeout >= 5_
 // Ce trebuie să conțină răspunsul MedGemma ca să-l acceptăm.
 // extracted_data trebuie să fie un obiect JSON (nu text, listă sau null),
 // pentru că îl salvăm în coloana JSONB medical_documents.extracted_data.
+//
+// Validăm și FORMA datelor (aceeași ca în AI/edge/extraction_service/schemas.py): dacă serviciul
+// își schimbă răspunsul, nu stocăm în tăcere date pe care restul aplicației nu le înțelege.
+// Valorile sunt text copiat din document; null = „nu apare în document”. Câmpurile necunoscute
+// sunt păstrate (passthrough), ca o extindere a serviciului să nu strice Backend-ul.
+const nullableText = z.string().nullable();
+const ExtractedDataSchema = z.looseObject({
+  medications: z.array(z.object({ name: nullableText, dose: nullableText, frequency: nullableText, duration: nullableText })),
+  diagnoses: z.array(z.string()),
+  lab_results: z.array(z.object({ test: nullableText, value: nullableText, unit: nullableText, reference_range: nullableText })),
+  dates: z.array(z.object({ label: nullableText, value: nullableText })),
+  warnings: z.array(z.string()),
+});
 const MedGemmaResponseSchema = z.object({
-  extracted_data: z.record(z.string(), z.unknown()),
+  extracted_data: ExtractedDataSchema,
 });
 
 // Forma unui răspuns de eroare al serviciului: { "error": "mesaj" }.
@@ -133,5 +146,5 @@ export async function extractWithMedGemma(file: Buffer, mimeType: FileMimeType):
     return { ok: false, status: 502, error: 'Serviciul de extragere a datelor a întors un răspuns invalid' };
   }
 
-  return { ok: true, extractedData: parsed.data.extracted_data };
+  return { ok: true, extractedData: parsed.data.extracted_data as Record<string, unknown> };
 }
