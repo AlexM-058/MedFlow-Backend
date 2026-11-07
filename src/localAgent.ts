@@ -2,7 +2,7 @@ type AgentResult = { ok: true; data: Record<string, unknown> } | { ok: false; st
 
 /** Server-to-server only. Never forward this credential to a browser. */
 export function createLocalAgentClient(environment: NodeJS.ProcessEnv = process.env, fetcher: typeof fetch = fetch) {
-  return async (operation: 'ready' | 'intake' | 'summary', payload?: unknown): Promise<AgentResult> => {
+  return async (operation: 'ready' | 'intake' | 'summary' | 'control-questions', payload?: unknown): Promise<AgentResult> => {
     const configured = environment.LOCAL_AGENT_URL?.trim();
     const token = environment.LOCAL_AGENT_TOKEN?.trim();
     if (!configured || !token || token.length < 32) return { ok: false, status: 503, error: 'Agentul local nu este configurat.' };

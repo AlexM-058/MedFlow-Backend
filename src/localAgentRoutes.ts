@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireUser, type CurrentUser } from './auth';
 import { getAdminClient } from './supabaseAdmin';
 import { createLocalAgentClient } from './localAgent';
+import { CONTROL_QUESTIONS_RECORD, parseStoredQuestions } from './controlQuestions';
 
 /** Patient messages are saved by the existing message API before requesting AI. */
 export function createLocalAgentRouter(options: { authenticate?: RequestHandler; getDb?: typeof getAdminClient; agent?: ReturnType<typeof createLocalAgentClient> } = {}) {
@@ -32,8 +33,18 @@ export function createLocalAgentRouter(options: { authenticate?: RequestHandler;
           response.status(409).json({ error: 'Conversația depășește limita agentului local. Originalul rămâne disponibil.' }); return;
         }
         if (!patientMessages.length) { response.status(409).json({ error: 'Salvați mai întâi un mesaj pentru medic.' }); return; }
+        // Control questions proposed by the cloud AI for this patient (from the anonymized summary), when the
+        // doctor generated them. The local agent only picks which one to ask; without them it uses its fixed list.
+        let questions: ReturnType<typeof parseStoredQuestions> = null;
+        if (operation === 'intake-question') {
+          const record = await db.from('medical_records').select('clinical_data').eq('patient_id', found.data.patient_id)
+            .eq('record_type', CONTROL_QUESTIONS_RECORD).maybeSingle();
+          if (record.error) throw record.error;
+          questions = parseStoredQuestions((record.data as { clinical_data?: unknown } | null)?.clinical_data);
+        }
         const result = await (options.agent ?? createLocalAgentClient())(operation === 'summary' ? 'summary' : 'intake', {
           messages: patientMessages.map((message) => ({ id: message.id, text: message.content })),
+          ...(questions ? { questions } : {}),
           ...(operation === 'intake-question' ? { askedTexts: history.data.filter((message) => message.sender_role === 'ai').slice(-7).map((message) => message.content) } : {}),
         });
         if (!result.ok) { response.status(result.status).json({ error: result.error }); return; }

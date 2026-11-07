@@ -145,6 +145,35 @@ Gemini failure) or an invalid result; `503` `AI_URL` missing or the AI service u
 `504` the AI service did not answer within 120 s. On `502`/`503`/`504` the saved state is
 not changed and the request can be sent again.
 
+### Control questions (cloud AI sees only an anonymized summary)
+
+Privacy rule: **no patient text, document or identifier goes to the cloud AI.** The Backend sends the medical file
+only to the local gateway (`LOCAL_AGENT_URL`, the project's laptop). The gateway projects it into a closed
+*anonymized summary* (age band, conditions, allergies and active substances from fixed vocabularies, lab levels
+low/normal/high, a count of omitted items; no names, addresses, dates or free text) and only that summary reaches
+Gemini. Gemini answers with a short summary and control questions, which are checked with fixed rules (no doses,
+advice or diagnosis) before anything is stored. The local agent then asks the patient those questions.
+
+| Method and path | Body | Success | Who |
+| --- | --- | --- | --- |
+| `POST /cases/{id}/control-questions` | `{}` | `201` + `{"controlQuestions": {summary, questions, model, generatedAt, sentToCloud}}` | the case's doctor only |
+| `GET /cases/{id}/control-questions` | none | `200` + `{"controlQuestions": {...} \| null}` | the case's patient or doctor |
+
+- `questions`: `[{"id", "text", "answerType": "yes_no" | "number" | "short_text"}]`, 1-8, `text` 8-200 chars.
+- `sentToCloud` is exactly what left for the cloud (the anonymized summary), shown to the doctor for transparency.
+- Stored per patient in `medical_records` (`record_type = control_questions_v1`): summary, questions, model, hash and
+  `sentToCloud`; never the patient's text. `cloud_disclosures` gets one row (case, provider `gemini`, model,
+  SHA-256 of the summary): the hash, never the content.
+- Only medicines from documents the patient reviewed count; diagnoses and lab results from documents are not sent
+  until a review exists for them. Unreviewed or unknown items stay local and are only counted (`omittedItemCount`).
+- Errors: `400` body not `{}` / invalid id, `403` not a doctor, `404` case not the caller's, `502` invalid answer from
+  the gateway, `503` gateway unreachable/busy or the AI failed (nothing is stored or logged then).
+- `POST /cases/{id}/intake-question` (patient, local agent) now also sends the stored control questions as
+  `questions`; the local model only picks which id to ask, it never writes the question. Without stored questions
+  the agent's fixed list is used, exactly as before.
+- Requires `LOCAL_AGENT_URL` + `LOCAL_AGENT_TOKEN` (the gateway) and, on the laptop, the AI cloud service
+  (`GEMINI_API_KEY`). `AI_URL`/`AI_TOKEN` are not used by this flow.
+
 ### Medical documents
 
 Requires migration `Database/migrations/002_post_consultation_fixes.sql` (category
