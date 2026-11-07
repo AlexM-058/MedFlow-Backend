@@ -101,6 +101,8 @@ answered with `201` only after it is saved.
 
 ### AI case analysis (doctor decision support)
 
+> **Off by default (GDPR).** This route sends the patient's raw text to the cloud AI. It answers `503` unless `ALLOW_RAW_CLOUD_ANALYSIS=true` is set, and should be enabled only for synthetic data. Use [Control questions](#control-questions-cloud-ai-sees-only-an-anonymized-summary) for real data.
+
 Requires migration `Database/migrations/003_doctor_orchestration_state.sql` and the
 MedFlow-AI cloud service running at `AI_URL`. Decision support only: the AI does not
 diagnose or prescribe, and nothing is sent to the patient automatically.

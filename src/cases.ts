@@ -196,7 +196,14 @@ casesRouter.post('/:id/messages', async (request, response) => {
 // POST /cases/:id/analysis — analiza AI de suport decizional, DOAR pentru medicul cazului.
 // Răspunsul e { status: 'FINAL', data: analiza } sau { status: 'CLARIFICATION_REQUIRED', data: întrebarea }.
 // Pentru o rundă de clarificare, medicul trimite din nou cererea, cu patientResponse.
+// ATENȚIE (GDPR): această rută trimite textul brut al pacientului (mesaje, documente) către AI-ul din cloud.
+// Este OPRITĂ implicit. Calea pentru date reale este POST /cases/:id/control-questions, în care spre cloud pleacă
+// doar un rezumat anonimizat. Se poate reporni doar explicit, pentru date SINTETICE, cu ALLOW_RAW_CLOUD_ANALYSIS=true.
 casesRouter.post('/:id/analysis', async (request, response) => {
+  if (process.env.ALLOW_RAW_CLOUD_ANALYSIS?.trim() !== 'true') {
+    response.status(503).json({ error: 'Analiza cu text brut către cloud este dezactivată. Folosiți întrebările de control (rezumat anonimizat).' });
+    return;
+  }
   const params = CaseIdParamsSchema.safeParse(request.params);
   if (!params.success) {
     response.status(400).json({ error: 'Date invalide', details: z.flattenError(params.error).fieldErrors });
