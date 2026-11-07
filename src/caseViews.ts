@@ -8,8 +8,44 @@ type CaseRow = { id: string; patient_id: string; doctor_id: string; status: stri
 type MessageRow = { id: string; case_id: string; sender_role: string; content: string; created_at: string };
 type DecisionRow = { id: string; case_id: string; doctor_id: string; final_response: string; created_at: string };
 type Page = { offset: number; limit: number };
+/** Newest-first messages of one case plus the time of the doctor's latest saved feedback. */
+export type CaseSignals = { caseId: string; messages: MessageRow[]; decisionAt: string | null };
+export type ReviewState = 'new' | 'needs_review' | 'up_to_date';
+export type CaseBacklogFields = {
+  last_message: { sender_role: string; content: string; created_at: string } | null;
+  review_state: ReviewState;
+  last_activity_at: string;
+};
+const SNIPPET_LENGTH = 140;
+const latest = (...stamps: Array<string | null>) => stamps.reduce<string | null>((best, stamp) => (stamp !== null && (best === null || Date.parse(stamp) > Date.parse(best)) ? stamp : best), null);
+
+/**
+ * Backlog view of a case for its doctor, derived only from existing data (no new columns):
+ * - new: no message from the patient or the doctor yet;
+ * - needs_review: the patient wrote after the doctor's latest message or saved feedback;
+ * - up_to_date: the doctor answered after the patient's latest message.
+ * System messages (e.g. an emergency notice) never count as an answer.
+ */
+export function summarizeCase(row: CaseRow, signals: CaseSignals | undefined): CaseBacklogFields {
+  const messages = signals?.messages ?? [];
+  const human = messages.filter((message) => message.sender_role === 'patient' || message.sender_role === 'doctor');
+  const lastHuman = human[0] ?? null;
+  const lastPatientAt = human.find((message) => message.sender_role === 'patient')?.created_at ?? null;
+  const doctorAt = latest(human.find((message) => message.sender_role === 'doctor')?.created_at ?? null, signals?.decisionAt ?? null);
+  let reviewState: ReviewState;
+  if (lastPatientAt === null) reviewState = doctorAt === null ? 'new' : 'up_to_date';
+  else reviewState = doctorAt !== null && Date.parse(doctorAt) >= Date.parse(lastPatientAt) ? 'up_to_date' : 'needs_review';
+  const text = lastHuman?.content.trim() ?? '';
+  return {
+    last_message: lastHuman ? { sender_role: lastHuman.sender_role, content: text.length > SNIPPET_LENGTH ? `${text.slice(0, SNIPPET_LENGTH - 1)}…` : text, created_at: lastHuman.created_at } : null,
+    review_state: reviewState,
+    last_activity_at: latest(row.updated_at, messages[0]?.created_at ?? null, signals?.decisionAt ?? null) ?? row.updated_at,
+  };
+}
 export interface CaseViewStore {
   list(user: CurrentUser, page: Page): Promise<CaseRow[]>;
+  /** Optional: when absent the doctor list is returned without backlog fields. */
+  activity?(caseIds: string[]): Promise<CaseSignals[]>;
   find(id: string): Promise<CaseRow | null>;
   messages(id: string, page: Page): Promise<MessageRow[]>;
   feedback(id: string): Promise<DecisionRow | null>;
@@ -28,6 +64,20 @@ const store: CaseViewStore = {
       .range(page.offset, page.offset + page.limit - 1);
     if (error) throw error;
     return data;
+  },
+  async activity(caseIds) {
+    if (caseIds.length === 0) return [];
+    const admin = getAdminClient();
+    const [perCase, decisions] = await Promise.all([
+      Promise.all(caseIds.map((caseId) => admin.from('case_messages').select('id,case_id,sender_role,content,created_at').eq('case_id', caseId)
+        .order('created_at', { ascending: false }).order('id', { ascending: false }).limit(10))),
+      admin.from('doctor_decisions').select('case_id,created_at').in('case_id', caseIds).order('created_at', { ascending: false }).limit(1000),
+    ]);
+    for (const result of perCase) if (result.error) throw result.error;
+    if (decisions.error) throw decisions.error;
+    const decisionAt = new Map<string, string>();
+    for (const decision of decisions.data) if (!decisionAt.has(decision.case_id)) decisionAt.set(decision.case_id, decision.created_at);
+    return caseIds.map((caseId, index) => ({ caseId, messages: perCase[index]?.data ?? [], decisionAt: decisionAt.get(caseId) ?? null }));
   },
   async find(id) {
     const { data, error } = await getAdminClient().from('cases').select(CASE_FIELDS).eq('id', id).maybeSingle();
@@ -88,8 +138,19 @@ export function createCaseViewsRouter(options: { authenticate?: RequestHandler; 
   router.get('/', async (request, response) => {
     const page = pagination.safeParse(request.query);
     if (!page.success) { response.status(400).json({ error: 'Paginare invalidă.', code: 'INVALID_REQUEST' }); return; }
-    try { response.json({ cases: await repository.list(response.locals.user, page.data) }); }
-    catch { response.status(503).json({ error: 'Dosarele nu pot fi încărcate.', code: 'SERVICE_UNAVAILABLE' }); }
+    try {
+      const user = response.locals.user as CurrentUser;
+      const rows = await repository.list(user, page.data);
+      let cases: unknown[] = rows;
+      // Backlog fields are an additive extra for the doctor; if they cannot be read the plain list is still returned.
+      if (user.role === 'doctor' && repository.activity && rows.length > 0) {
+        try {
+          const byCase = new Map((await repository.activity(rows.map((item) => item.id))).map((signals) => [signals.caseId, signals]));
+          cases = rows.map((item) => ({ ...item, ...summarizeCase(item, byCase.get(item.id)) }));
+        } catch { cases = rows; }
+      }
+      response.json({ cases });
+    } catch { response.status(503).json({ error: 'Dosarele nu pot fi încărcate.', code: 'SERVICE_UNAVAILABLE' }); }
   });
 
   for (const resource of ['messages', 'decision', 'context'] as const) {
