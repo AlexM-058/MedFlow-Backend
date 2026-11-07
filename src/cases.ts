@@ -12,6 +12,12 @@ import {
   DocumentUploadQuerySchema,
   MessageBodySchema,
 } from './schemas';
+import { CreateMedicalRecordBodySchema } from './schemas';
+import {
+  getPatientRecords,
+  updatePatientSummariesFromDocuments,
+  upsertMedicalRecord,
+} from './records';
 import { getAdminClient } from './supabaseAdmin';
 
 export const casesRouter = Router();
@@ -252,25 +258,24 @@ casesRouter.post(
       return;
     }
 
-    // Trimitem fișierul la MedGemma. Dacă extragerea eșuează, NU salvăm nimic
-    // și îi spunem clientului, ca documentul să poată fi retrimis (nu se pierde în tăcere).
+    // Încercăm extragerea automată cu MedGemma dacă este disponibil serviciul.
+    // Dacă serviciul e offline sau indisponibil, documentul se salvează oricum în DB
+    // pentru a nu pierde fișierul și metadatele pacientului.
     const extraction = await extractWithMedGemma(file, mimeType);
-    if (!extraction.ok) {
-      response.status(extraction.status).json({ error: extraction.error });
-      return;
-    }
+    const extractedData = extraction.ok
+      ? extraction.extractedData
+      : { extraction_status: 'unavailable', error: extraction.error };
 
-    // Salvăm DOAR rezultatul extras + metadate despre fișier (migrarea 002 cere metadatele
-    // la fiecare upload). Fișierul brut (variabila `file`) nu ajunge în baza de date.
+    // Salvăm rezultatul extras + metadate despre fișier.
     const { data: document, error: insertError } = await getAdminClient()
       .from('medical_documents')
       .insert({
         case_id: foundCase.id,
-        uploaded_by: user.id, // din token, nu din cerere: nimeni nu poate încărca „în numele” altcuiva
+        uploaded_by: user.id,
         document_type: query.data.documentType,
-        mime_type: mimeType, // tipul REAL, detectat din octeți, nu cel declarat în Content-Type
+        mime_type: mimeType,
         size_bytes: file.length,
-        extracted_data: extraction.extractedData,
+        extracted_data: extractedData,
       })
       .select('id, case_id, uploaded_by, document_type, mime_type, size_bytes, extracted_data, created_at')
       .single();
@@ -278,6 +283,89 @@ casesRouter.post(
       throw new Error('Nu am putut salva documentul: ' + insertError.message);
     }
 
+    // Actualizăm sumarul de rețete și sumarul dosarului dacă avem date extrase
+    if (extraction.ok) {
+      try {
+        await updatePatientSummariesFromDocuments(foundCase.patient_id);
+      } catch (sumError) {
+        console.error('Nu am putut actualiza sumarele pacientului:', sumError);
+      }
+    }
+
     response.status(201).json(document);
   },
 );
+
+// GET /cases/:id/documents — lista documentelor medicale încărcate pentru acest caz
+casesRouter.get('/:id/documents', async (request, response) => {
+  const params = CaseIdParamsSchema.safeParse(request.params);
+  if (!params.success) {
+    response.status(400).json({ error: 'Date invalide', details: z.flattenError(params.error).fieldErrors });
+    return;
+  }
+  const user = response.locals.user as CurrentUser;
+  const foundCase = await findCaseForUser(params.data.id, user);
+  if (!foundCase) {
+    response.status(404).json({ error: 'Cazul nu a fost găsit' });
+    return;
+  }
+
+  const { data: docs, error } = await getAdminClient()
+    .from('medical_documents')
+    .select('id, case_id, uploaded_by, document_type, mime_type, size_bytes, extracted_data, created_at')
+    .eq('case_id', foundCase.id)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    throw new Error('Nu am putut citi documentele cazului: ' + error.message);
+  }
+
+  response.json(docs || []);
+});
+
+// GET /cases/:id/records — citește rețetele, sumarul de rețetă și sumarul clinic al pacientului (No-AI)
+casesRouter.get('/:id/records', async (request, response) => {
+  const params = CaseIdParamsSchema.safeParse(request.params);
+  if (!params.success) {
+    response.status(400).json({ error: 'Date invalide', details: z.flattenError(params.error).fieldErrors });
+    return;
+  }
+  const user = response.locals.user as CurrentUser;
+  const foundCase = await findCaseForUser(params.data.id, user);
+  if (!foundCase) {
+    response.status(404).json({ error: 'Cazul nu a fost găsit' });
+    return;
+  }
+
+  const recordsData = await getPatientRecords(foundCase.patient_id);
+  response.json(recordsData);
+});
+
+// POST /cases/:id/records — introducere manuală direct în dosarul pacientului (No-AI)
+casesRouter.post('/:id/records', async (request, response) => {
+  const params = CaseIdParamsSchema.safeParse(request.params);
+  if (!params.success) {
+    response.status(400).json({ error: 'Date invalide', details: z.flattenError(params.error).fieldErrors });
+    return;
+  }
+  const body = CreateMedicalRecordBodySchema.safeParse(request.body ?? {});
+  if (!body.success) {
+    response.status(400).json({ error: 'Date invalide', details: z.flattenError(body.error).fieldErrors });
+    return;
+  }
+
+  const user = response.locals.user as CurrentUser;
+  const foundCase = await findCaseForUser(params.data.id, user);
+  if (!foundCase) {
+    response.status(404).json({ error: 'Cazul nu a fost găsit' });
+    return;
+  }
+
+  const recordId = await upsertMedicalRecord(
+    foundCase.patient_id,
+    body.data.recordType,
+    body.data.clinicalData,
+  );
+
+  response.status(201).json({ id: recordId, status: 'saved' });
+});

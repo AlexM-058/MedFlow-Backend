@@ -12,8 +12,12 @@ import type { FileMimeType } from './fileType';
 //
 // Fișierul brut rămâne doar în memorie, pe durata cererii. Nu îl salvăm nicăieri.
 
-// Cât așteptăm răspunsul. Un model local poate fi lent pe un PDF cu mai multe pagini.
-const TIMEOUT_MS = 60_000;
+// Cât așteptăm răspunsul. Serviciul face preprocesare, OCR și extragere cu un model local
+// (pe un GPU de 6 GB, sau pe CPU dacă nu există GPU), iar un PDF cu mai multe pagini poate dura.
+// Se poate schimba din Backend/.env cu EXTRACTION_TIMEOUT_MS (milisecunde).
+const DEFAULT_TIMEOUT_MS = 120_000;
+const configuredTimeout = Number(process.env.EXTRACTION_TIMEOUT_MS);
+const TIMEOUT_MS = Number.isFinite(configuredTimeout) && configuredTimeout >= 5_000 ? configuredTimeout : DEFAULT_TIMEOUT_MS;
 
 // Ce trebuie să conțină răspunsul MedGemma ca să-l acceptăm.
 // extracted_data trebuie să fie un obiect JSON (nu text, listă sau null),

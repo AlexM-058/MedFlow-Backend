@@ -61,7 +61,17 @@ const CaseSummarySchema = z.object({
   }),
 });
 
-// Body pentru POST /cases/:id/analysis.
+// Body pentru POST /cases/:id/records (introducere manuală în dosar fără AI).
+export const CreateMedicalRecordBodySchema = z.object({
+  recordType: z
+    .string('recordType trebuie să fie text')
+    .trim()
+    .min(1, 'recordType nu poate fi gol')
+    .max(50, 'recordType poate avea maxim 50 de caractere')
+    .refine((value) => value !== 'patient_context_v1', 'Contextul pacientului se modifică numai prin API-ul dedicat.'),
+  clinicalData: z.record(z.string(), z.unknown()),
+});
+
 // - prima rundă: doar caseSummary (+ opțional documentsContext)
 // - runda de clarificare: același caseSummary + patientResponse (răspunsul pacientului)
 export const AnalysisBodySchema = z.object({

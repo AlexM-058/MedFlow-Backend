@@ -1,6 +1,8 @@
 import "dotenv/config";
 import express from "express";
 import { casesRouter } from "./cases";
+import { createCaseViewsRouter } from "./caseViews";
+import { createPatientContextRouter } from "./patientContext";
 import { pingDatabase } from "./supabase.js";
 import { createAccountRouter } from "./account";
 import { createAdminRouter } from "./admin";
@@ -35,6 +37,8 @@ app.get("/health/db", async (_request, response) => {
   });
 });
 
+app.use("/patient/context", createPatientContextRouter());
+app.use("/cases", createCaseViewsRouter());
 app.use("/cases", casesRouter);
 app.use(createAccountRouter());
 app.use(createAdminRouter());

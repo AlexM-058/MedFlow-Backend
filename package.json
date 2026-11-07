@@ -9,6 +9,7 @@
     "build": "tsc",
     "test:account": "tsx --test src/account/*.test.ts src/httpConfig.test.ts",
     "test:admin": "tsx --test src/admin/*.test.ts",
+    "test:records": "tsx --test src/records.test.ts",
     "invite:doctor": "tsx scripts/create-doctor-invitation.ts",
     "invite:revoke": "tsx scripts/revoke-doctor-invitation.ts"
   },
