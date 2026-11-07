@@ -18,6 +18,14 @@ import { CaseSummarySchema, type CaseSummary } from './schemas';
 // Cât așteptăm răspunsul. Gemini poate încerca de 3 ori (câte 30 s), cu pauze de 2 s și 4 s între încercări.
 const TIMEOUT_MS = 120_000;
 
+// Antetele cererii către serviciul AI. Dacă serviciul e în spatele gateway-ului tunelat (nu pe localhost),
+// AI_TOKEN (aceeași valoare ca LOCAL_AGENT_TOKEN) se trimite ca „Authorization: Bearer”. Fără AI_TOKEN,
+// cererea rămâne ca până acum. Tokenul e secret de server: nu apare în Frontend sau în răspunsuri.
+function aiHeaders(): Record<string, string> {
+  const token = process.env.AI_TOKEN?.trim();
+  return { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
+
 // Starea rundelor de clarificare. Pentru Backend e o „cutie închisă”: nu ne uităm înăuntru
 // (roundCount etc. le gestionează AI-ul), doar verificăm că e un obiect JSON, cum cere
 // CHECK-ul din migrarea 003. Așa, dacă AI-ul adaugă un câmp nou, Backend-ul nu trebuie schimbat.
@@ -69,7 +77,8 @@ export async function requestAnalysis(request: AnalysisRequest): Promise<Analysi
   try {
     aiResponse = await fetch(`${baseUrl}/analysis`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: aiHeaders(),
+      redirect: 'error',
       body: JSON.stringify(request),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
@@ -166,7 +175,8 @@ export async function requestCaseSummary(request: CaseSummaryRequest): Promise<C
   try {
     aiResponse = await fetch(`${baseUrl}/case-summary`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: aiHeaders(),
+      redirect: 'error',
       body: JSON.stringify({
         caseId: request.caseId,
         patientId: request.patientId,

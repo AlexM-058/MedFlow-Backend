@@ -21,6 +21,7 @@ AI analysis is requested over HTTP from the MedFlow-AI cloud service
 | `SUPABASE_PUBLISHABLE_KEY` | Backend `.env` | User-scoped client (with JWT) |
 | `SUPABASE_SECRET_KEY` | Backend `.env` only | Service role for trusted DB access |
 | `AI_URL` | Backend `.env` | MedFlow-AI cloud service, used by `POST /cases/{id}/analysis` (e.g. `http://127.0.0.1:8091`). The Gemini key lives in MedFlow-AI's `.env`. |
+| `AI_TOKEN` | Backend `.env` | Optional. Sent as `Authorization: Bearer` to `AI_URL` when that is the tunnel of the local gateway (`/analysis` and `/case-summary` are proxied there to the cloud service on 8091). Same value as `LOCAL_AGENT_TOKEN`. |
 | `MEDGEMMA_URL` | Backend `.env` | Local MedGemma extraction service (e.g. `http://127.0.0.1:8090`) |
 | `HOST` / `PORT` | Backend `.env` | Listen address (default `127.0.0.1:3001`; in a container `0.0.0.0`) |
 | `CORS_ORIGINS` / `APP_ORIGIN` | Backend `.env` | Frontend origins allowed to call the API from a browser (`src/httpConfig.ts`, see `AUTH_SETUP.md`): exact HTTPS origins, HTTP only on localhost. Other origins get `403`. CORS does not replace the token check. |
