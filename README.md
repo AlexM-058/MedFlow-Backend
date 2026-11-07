@@ -62,10 +62,16 @@ The caller's id and role (`patient`/`doctor`) come from the token and the
 
 | Method and path | Body | Success | Who |
 | --- | --- | --- | --- |
+| `GET /cases?limit=&offset=` | none | `200` + `{"cases": [case]}` (newest first, `limit` 1-100, default 50) | patients (own cases) or doctors (their patients' cases) |
 | `POST /cases` | `{}` or `{"doctorId": "<uuid>"}` | `201` + case | patients |
 | `GET /cases/{id}` | none | `200` + case | the case's patient or doctor |
 | `POST /cases/{id}/messages` | `{"content": "<1-5000 chars>"}` | `201` + message | the case's patient or doctor |
 | `POST /cases/{id}/documents` | raw file bytes (see below) | `201` + document | the case's patient or doctor |
+
+For a **doctor**, `GET /cases` adds three read-only fields to every case (additive; existing fields are unchanged, patients never receive them):
+`last_message` (`{"sender_role","content" (max 140 chars),"created_at"}` or `null`; system messages are skipped),
+`review_state` (`"new"` no patient/doctor message yet, `"needs_review"` the patient wrote after the doctor's latest message or saved feedback, `"up_to_date"` otherwise)
+and `last_activity_at`. If these cannot be computed the plain list is returned without them, so clients must treat them as optional.
 
 Case: `{"id","patient_id","doctor_id","status","created_at","updated_at"}`;
 a new case starts with `status: "draft"`. The patient is the caller; the doctor is

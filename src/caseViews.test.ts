@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { test } from 'node:test';
 import express from 'express';
 import type { CurrentUser } from './auth';
-import { createCaseViewsRouter, type CaseViewStore } from './caseViews';
+import { createCaseViewsRouter, summarizeCase, type CaseSignals, type CaseViewStore } from './caseViews';
 
 const patient = '11111111-1111-4111-8111-111111111111';
 const doctor = '22222222-2222-4222-8222-222222222222';
@@ -88,3 +88,60 @@ test('invalid case ids and feedback are rejected before persistence', async () =
   }
   assert.deepEqual(calls, []);
 }));
+
+const at = (minute: number) => `2026-11-07T10:${String(minute).padStart(2, '0')}:00Z`;
+const message = (sender_role: string, minute: number, content = 'Synthetic text') => ({ id, case_id: id, sender_role, content, created_at: at(minute) });
+const signals = (messages: ReturnType<typeof message>[], decisionAt: string | null = null): CaseSignals => ({ caseId: id, messages, decisionAt });
+
+test('backlog state: a case without human messages is new', () => {
+  assert.equal(summarizeCase(row, signals([])).review_state, 'new');
+  assert.equal(summarizeCase(row, undefined).review_state, 'new');
+  assert.equal(summarizeCase(row, signals([message('system', 5)])).review_state, 'new');
+  assert.equal(summarizeCase(row, undefined).last_message, null);
+});
+test('backlog state: the patient writing last needs review, the doctor answering clears it', () => {
+  assert.equal(summarizeCase(row, signals([message('patient', 5)])).review_state, 'needs_review');
+  assert.equal(summarizeCase(row, signals([message('doctor', 9), message('patient', 5)])).review_state, 'up_to_date');
+  assert.equal(summarizeCase(row, signals([message('patient', 12), message('doctor', 9)])).review_state, 'needs_review');
+});
+test('backlog state: saved feedback counts as the doctor answering, but only if it is newer', () => {
+  assert.equal(summarizeCase(row, signals([message('patient', 5)], at(8))).review_state, 'up_to_date');
+  assert.equal(summarizeCase(row, signals([message('patient', 12)], at(8))).review_state, 'needs_review');
+  assert.equal(summarizeCase(row, signals([], at(8))).review_state, 'up_to_date');
+});
+test('backlog state: an emergency system message after the patient does not hide the review', () => {
+  const result = summarizeCase(row, signals([message('system', 6, 'Call 112'), message('patient', 5, 'Severe chest pain')]));
+  assert.equal(result.review_state, 'needs_review');
+  assert.equal(result.last_message?.sender_role, 'patient');
+  assert.equal(result.last_activity_at, at(6));
+});
+test('backlog last message is shortened and activity is the newest timestamp', () => {
+  const long = 'x'.repeat(500);
+  const result = summarizeCase({ ...row, updated_at: at(1) }, signals([message('patient', 7, long)], at(3)));
+  assert.equal(result.last_message?.content.length, 140);
+  assert.equal(result.last_message?.content.endsWith('…'), true);
+  assert.equal(result.last_activity_at, at(7));
+});
+test('the doctor list carries backlog fields, scoped to the doctor, without changing existing fields', async () => {
+  const asked: string[][] = [];
+  await fixture({ id: doctor, role: 'doctor' }, async (url, calls) => {
+    const body = await (await fetch(url)).json() as { cases: Array<Record<string, unknown>> };
+    assert.equal(body.cases.length, 1);
+    assert.equal(body.cases[0]?.id, id); assert.equal(body.cases[0]?.patient_id, patient); assert.equal(body.cases[0]?.status, 'draft');
+    assert.equal(body.cases[0]?.review_state, 'needs_review');
+    assert.deepEqual(calls, [`list:${doctor}:0:50`]);
+    assert.deepEqual(asked, [[id]]);
+  }, { async activity(ids) { asked.push(ids); return [signals([message('patient', 5)])]; } });
+});
+test('the patient list never gets the backlog fields and does not trigger the activity query', () => fixture({ id: patient, role: 'patient' }, async (url) => {
+  const body = await (await fetch(url)).json() as { cases: Array<Record<string, unknown>> };
+  assert.equal('review_state' in (body.cases[0] ?? {}), false);
+  assert.equal('last_message' in (body.cases[0] ?? {}), false);
+}, { async activity() { throw new Error('must not be called for patients'); } }));
+test('if the backlog fields cannot be read, the doctor still gets the plain list', () => fixture({ id: doctor, role: 'doctor' }, async (url) => {
+  const result = await fetch(url);
+  assert.equal(result.status, 200);
+  const body = await result.json() as { cases: Array<Record<string, unknown>> };
+  assert.equal(body.cases[0]?.id, id);
+  assert.equal('review_state' in (body.cases[0] ?? {}), false);
+}, { async activity() { throw new Error('database down'); } }));
