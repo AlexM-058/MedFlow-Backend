@@ -64,7 +64,11 @@ export async function extractWithMedGemma(file: Buffer, mimeType: FileMimeType):
   try {
     medGemmaResponse = await fetch(`${baseUrl}/extract`, {
       method: 'POST',
-      headers: { 'Content-Type': mimeType },
+      headers: {
+        'Content-Type': mimeType,
+        ...(process.env.MEDGEMMA_TOKEN?.trim() ? { Authorization: `Bearer ${process.env.MEDGEMMA_TOKEN.trim()}` } : {}),
+      },
+      redirect: 'error',
       // TypeScript nu acceptă direct un Buffer ca body la fetch;
       // Uint8Array conține aceiași octeți, într-un tip pe care fetch îl acceptă.
       body: new Uint8Array(file),
