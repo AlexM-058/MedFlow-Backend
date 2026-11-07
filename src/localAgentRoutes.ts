@@ -36,15 +36,34 @@ export function createLocalAgentRouter(options: { authenticate?: RequestHandler;
         // Control questions proposed by the cloud AI for this patient (from the anonymized summary), when the
         // doctor generated them. The local agent only picks which one to ask; without them it uses its fixed list.
         let questions: ReturnType<typeof parseStoredQuestions> = null;
+        const dossierContext: Record<string, string> = {};
         if (operation === 'intake-question') {
-          const record = await db.from('medical_records').select('clinical_data').eq('patient_id', found.data.patient_id)
-            .eq('record_type', CONTROL_QUESTIONS_RECORD).maybeSingle();
-          if (record.error) throw record.error;
-          questions = parseStoredQuestions((record.data as { clinical_data?: unknown } | null)?.clinical_data);
+          for (const [recordType, field, target] of [
+            ['prescriptions', 'prescriptionSummary', 'confirmedMedications'],
+            ['clinical_summary', 'summary', 'unverifiedClinical'],
+            [CONTROL_QUESTIONS_RECORD, 'summary', 'controlSummary'],
+          ] as const) {
+            const record = await db.from('medical_records').select('clinical_data').eq('patient_id', found.data.patient_id)
+              .eq('record_type', recordType).maybeSingle();
+            if (record.error) throw record.error;
+            const data: unknown = record.data?.clinical_data;
+            if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
+            const stored = data as Record<string, unknown>;
+            if (recordType === CONTROL_QUESTIONS_RECORD) {
+              if (stored.caseId !== id.data) continue;
+              questions = parseStoredQuestions(stored);
+            }
+            const text = stored[field];
+            if (typeof text === 'string' && text.trim()) {
+              // Explicit marker: an overlong section is unavailable, never silently truncated.
+              dossierContext[target] = text.length <= 2000 ? text : '[Summary exceeds context limit; unavailable. Ask patient for clarification.]';
+            }
+          }
         }
         const result = await (options.agent ?? createLocalAgentClient())(operation === 'summary' ? 'summary' : 'intake', {
           messages: patientMessages.map((message) => ({ id: message.id, text: message.content })),
           ...(questions ? { questions } : {}),
+          ...(operation === 'intake-question' ? { dossierContext } : {}),
           ...(operation === 'intake-question' ? { askedTexts: history.data.filter((message) => message.sender_role === 'ai').slice(-7).map((message) => message.content) } : {}),
         });
         if (!result.ok) { response.status(result.status).json({ error: result.error }); return; }

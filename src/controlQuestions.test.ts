@@ -181,10 +181,11 @@ async function intakeFixture(stored: unknown, run: (url: string, payloads: Recor
   const payloads: Record<string, unknown>[] = [];
   const db = {
     from(table: string) {
+      let recordType = '';
       const query = {
-        select() { return query; }, eq() { return query; }, order() { return query; },
+        select() { return query; }, eq(key: string, value: string) { if (key === 'record_type') recordType = value; if (key === 'patient_id') assert.equal(value, patient); return query; }, order() { return query; },
         async maybeSingle() {
-          if (table === 'medical_records') return { data: stored === undefined ? null : { clinical_data: stored }, error: null };
+          if (table === 'medical_records') return { data: recordType === 'control_questions_v1' && stored !== undefined ? { clinical_data: stored } : recordType === 'prescriptions' ? { clinical_data: { prescriptionSummary: 'Tratament sintetic verificat.', secret: 'do not forward' } } : null, error: null };
           return { data: { patient_id: patient, doctor_id: doctor }, error: null };
         },
         async limit() { return { data: [{ id: 'm1', sender_role: 'patient', content: 'Am sete.' }, { id: 'a1', sender_role: 'ai', content: 'Prima întrebare?' }], error: null }; },
@@ -209,10 +210,11 @@ async function intakeFixture(stored: unknown, run: (url: string, payloads: Recor
 }
 
 test('the patient agent gets the stored control questions, and the fixed list when there are none', async () => {
-  await intakeFixture({ questions: gatewayResult.questions }, async (url, payloads) => {
+  await intakeFixture({ caseId, summary: 'Rezumat sintetic.', questions: gatewayResult.questions }, async (url, payloads) => {
     assert.equal((await post(url)).status, 201);
     assert.deepEqual(payloads[0]!.questions, gatewayResult.questions);
     assert.deepEqual(payloads[0]!.askedTexts, ['Prima întrebare?']);
+    assert.deepEqual(payloads[0]!.dossierContext, { confirmedMedications: 'Tratament sintetic verificat.', controlSummary: 'Rezumat sintetic.' });
   });
   await intakeFixture(undefined, async (url, payloads) => {
     assert.equal((await post(url)).status, 201);
@@ -221,5 +223,13 @@ test('the patient agent gets the stored control questions, and the fixed list wh
   await intakeFixture({ questions: [{ id: 'BAD', text: 'x', answerType: 'yes_no' }] }, async (url, payloads) => {
     assert.equal((await post(url)).status, 201);
     assert.ok(!('questions' in payloads[0]!), 'a malformed stored record is ignored, never forwarded');
+  });
+});
+
+test('intake excludes questions and control summaries belonging to another case', async () => {
+  await intakeFixture({ caseId: stranger, summary: 'Other case', questions: gatewayResult.questions }, async (url, payloads) => {
+    assert.equal((await post(url)).status, 201);
+    assert.ok(!('questions' in payloads[0]!));
+    assert.deepEqual(payloads[0]!.dossierContext, { confirmedMedications: 'Tratament sintetic verificat.' });
   });
 });
