@@ -43,6 +43,10 @@ const ExtractedDataSchema = z.looseObject({
   lab_results: z.array(z.object({ test: nullableText, value: nullableText, unit: nullableText, reference_range: nullableText })),
   dates: z.array(z.object({ label: nullableText, value: nullableText })),
   warnings: z.array(z.string()),
+  // Added later: allergies and other medical information (vital signs, symptoms, procedures, recommendations).
+  // Optional so a service version without them still passes. Identity data is never extracted (the service refuses it).
+  allergies: z.array(z.string()).optional(),
+  observations: z.array(z.object({ label: nullableText, value: nullableText })).optional(),
 });
 const MedGemmaResponseSchema = z.object({
   extracted_data: ExtractedDataSchema,

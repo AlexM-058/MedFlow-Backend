@@ -236,7 +236,9 @@ Expected answer: `200` + `{"extracted_data": { ... }}`, where `extracted_data` h
 (validated; stored as-is in the JSONB column, unknown extra fields are kept). Any other status
 or shape is treated as `502`:
 `medications[{name,dose,frequency,duration}]`, `diagnoses[]`, `lab_results[{test,value,unit,reference_range}]`,
-`dates[{label,value}]`, `warnings[]` (values are text or `null`).
+`dates[{label,value}]`, `warnings[]` (values are text or `null`), and optionally `allergies[]` and
+`observations[{label,value}]` (vital signs, symptoms, procedures, recommendations; every value was checked to
+appear in the document, and identity data such as names, addresses, phones or CNP is never extracted).
 
 The real service is `MedFlow-AI/edge/extraction_service` (Python + FastAPI + local
 MedGemma via Ollama); start it as described in its README, on port 8090. Its

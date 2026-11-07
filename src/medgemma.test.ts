@@ -44,6 +44,24 @@ test('a response with the documented shape is accepted and unknown fields are ke
   });
 });
 
+test('allergies and observations are accepted and validated when present', async () => {
+  const withExtras = { ...validData, allergies: ['penicilină'], observations: [{ label: 'Puls', value: '72 bătăi/min' }] };
+  await withService((response) => { response.json({ extracted_data: withExtras }); }, async () => {
+    const result = await extractWithMedGemma(png, 'image/png');
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.deepEqual(result.extractedData.allergies, ['penicilină']);
+      assert.deepEqual(result.extractedData.observations, [{ label: 'Puls', value: '72 bătăi/min' }]);
+    }
+  });
+  for (const bad of [{ ...validData, allergies: 'penicilină' }, { ...validData, observations: [{ label: 5, value: null }] }, { ...validData, observations: ['Puls'] }]) {
+    await withService((response) => { response.json({ extracted_data: bad }); }, async () => {
+      const result = await extractWithMedGemma(png, 'image/png');
+      assert.deepEqual(result.ok ? null : result.status, 502);
+    });
+  }
+});
+
 test('a response whose inner shape drifted is rejected with 502 instead of being stored', async () => {
   for (const bad of [
     { values: [{ name: 'Hemoglobină', value: 13.5 }] }, // forma vechiului mock
